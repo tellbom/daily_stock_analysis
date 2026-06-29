@@ -11,6 +11,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 <!-- 新条目格式：- [类型] 描述（类型取值：新功能/改进/修复/文档/测试/chore）-->
 <!-- 每条独立一行追加到本段末尾，无需分类标题，合并时冲突最小 -->
+- [改进] 新增本地 Python Web 服务启动脚本，便于按 `.env` 复现部署。
+- [改进] A 股日线默认接入 stock-analysis 风格 AKShare 抓取顺序，Tushare 降为可选后备源。
+- [文档] 新增本地 Python 服务独立部署说明。
+- [改进] 普通分析基于已获取日线新增 LLM 结构化因子摘要，覆盖均线偏离、MACD、RSI、布林、ATR、量能和 A 股短线涨跌停距离。
+- [测试] 补充 LLM 因子摘要、AnalysisContextPack 因子块和 analyzer prompt 注入回归测试。
 
 ## [3.24.1] - 2026-06-28
 

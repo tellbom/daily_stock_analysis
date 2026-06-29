@@ -456,6 +456,30 @@ def test_data_quality_scores_fixed_blocks_and_limits_auxiliary_missing() -> None
     assert "news: missing" not in blank_news.data_quality.limitations
 
 
+def test_factor_block_is_auxiliary_and_uses_migrated_summary() -> None:
+    pack = AnalysisContextBuilder.build(
+        _artifacts(
+            factor_context={
+                "status": "partial",
+                "source": "storage.get_data_range",
+                "as_of": "2026-05-24",
+                "bar_count": 12,
+                "trend": {"ma_alignment": "mixed"},
+                "warnings": ["factor_warmup_partial"],
+            }
+        )
+    )
+
+    block = pack.blocks["factors"]
+    assert block.status == ContextFieldStatus.PARTIAL
+    assert block.source == "storage.get_data_range"
+    assert block.metadata["as_of"] == "2026-05-24"
+    assert block.metadata["quality_weighted"] is False
+    assert block.items["factor_summary"].value["trend"]["ma_alignment"] == "mixed"
+    assert "factor_warmup_partial" in block.warnings
+    assert "factors" not in pack.data_quality.block_scores
+
+
 def test_portfolio_block_is_auxiliary_and_does_not_change_quality_score() -> None:
     baseline = AnalysisContextBuilder.build(_artifacts())
     pack = AnalysisContextBuilder.build(

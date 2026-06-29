@@ -676,6 +676,12 @@ python main.py --debug                # 调试模式（详细日志）
 python main.py --workers 5            # 指定并发数
 ```
 
+本地 Python Web/API 服务也可以直接使用脚本启动；完整交付说明见 [本地 Python 服务部署说明](local-python-service.md)。
+
+```bash
+./scripts/start-local-service.sh
+```
+
 ---
 
 ## 定时任务配置
@@ -859,7 +865,9 @@ P4b 在 Web 端补齐阶段可见性，但不新增阶段覆盖 selector。进�
 
 #### AnalysisContextPack Prompt 摘要（Issue #1389 P3）
 
-P3 在普通分析和 Agent 初始上下文中接入 `AnalysisContextPack` 低敏摘要。Pipeline 会用已获取的行情、日线、趋势、筹码、基本面、新闻和市场阶段 artifacts 组装 pack，再把 `analysis_context_pack_summary` 插入 Prompt；在这个新增的 pack 摘要区块中，LLM 只看到 subject、版本、各数据块的状态/来源/warning/missing reason 和新闻结果数，不会通过该区块看到完整 `news.content`、`trend_result`、筹码或基本面原始 payload。既有 `news_context`、Agent pre-fetched JSON 和 `enhanced_context` 原始数据通道保持 P3 前行为，不由本摘要替代或脱敏。
+P3 在普通分析和 Agent 初始上下文中接入 `AnalysisContextPack` 低敏摘要。Pipeline 会用已获取的行情、日线、趋势、因子摘要、筹码、基本面、新闻和市场阶段 artifacts 组装 pack，再把 `analysis_context_pack_summary` 插入 Prompt；在这个新增的 pack 摘要区块中，LLM 只看到 subject、版本、各数据块的状态/来源/warning/missing reason 和新闻结果数，不会通过该区块看到完整 `news.content`、`trend_result`、`factor_summary`、筹码或基本面原始 payload。既有 `news_context`、Agent pre-fetched JSON 和 `enhanced_context` 原始数据通道保持 P3 前行为，不由本摘要替代或脱敏。
+
+普通分析会额外把当前项目内部 `src/factors/` 生成的 `enhanced_context.factor_summary` 渲染为“结构化因子摘要（LLM 辅助输入）”，覆盖均线偏离、MACD、RSI、布林、ATR、量能、20 日区间位置和 A 股涨跌停距离。该摘要只基于 pipeline 已有日线和可选实时价派生，不读取外部项目源码、不新增训练/回测/数据湖依赖，也不替代资金流、基本面、新闻或风险事件证据。
 
 P3 当时不新增 API/Web/Bot 参数，不写入 history/task status/report metadata，不改变报告 JSON schema，也不把完整 pack 暴露到历史、通知或 Web。Agent 工具级复用 pack 数据和 P5 数据质量评分留给后续阶段。
 

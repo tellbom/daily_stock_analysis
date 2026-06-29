@@ -612,6 +612,7 @@ class DataFetcherManager:
     """
 
     _DAILY_MARKET_FETCHER_SUPPORT = {
+        "StockAnalysisAkshareFetcher": {"cn"},
         "EfinanceFetcher": {"cn"},
         "TencentFetcher": {"cn"},
         "AkshareFetcher": {"cn", "hk"},
@@ -1144,13 +1145,16 @@ class DataFetcherManager:
         - 如果配置了 Longbridge OAuth 或 Legacy 凭据：实例化 LongbridgeFetcher 作为美股/港股兜底
         - 未配置的可选数据源不实例化，避免在批量拉取时反复探测无效源
         - 默认优先级：
-          0. EfinanceFetcher (Priority 0) - 最高优先级
-          1. AkshareFetcher (Priority 1)
-          2. PytdxFetcher (Priority 2) - 通达信
-          3. BaostockFetcher (Priority 3)
-          4. YfinanceFetcher (Priority 4)
+        0. StockAnalysisAkshareFetcher (Priority -2) - stock-analysis 风格 AKShare 日线源
+        1. EfinanceFetcher (Priority 0)
+        2. TencentFetcher (Priority 0)
+        3. AkshareFetcher (Priority 1)
+        4. PytdxFetcher (Priority 2) - 通达信
+        5. BaostockFetcher (Priority 3)
+        6. YfinanceFetcher (Priority 4)
         """
         from src.config import get_config
+        from .stock_analysis_akshare_fetcher import StockAnalysisAkshareFetcher
         from .efinance_fetcher import EfinanceFetcher
         from .tencent_fetcher import TencentFetcher
         from .akshare_fetcher import AkshareFetcher
@@ -1162,6 +1166,7 @@ class DataFetcherManager:
         from .longbridge_fetcher import LongbridgeFetcher
         config = get_config()
         # 创建所有数据源实例（优先级在各 Fetcher 的 __init__ 中确定）
+        stock_analysis_akshare = StockAnalysisAkshareFetcher(sleep_min=0.5, sleep_max=1.5)
         efinance = EfinanceFetcher()
         tencent = TencentFetcher()
         akshare = AkshareFetcher()
@@ -1213,6 +1218,7 @@ class DataFetcherManager:
         self._ensure_concurrency_guards()
         with self._fetchers_lock:
             self._fetchers = [
+                stock_analysis_akshare,
                 efinance,
                 tencent,
                 akshare,

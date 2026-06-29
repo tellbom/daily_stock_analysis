@@ -214,6 +214,40 @@ class AnalyzerNewsPromptTestCase(unittest.TestCase):
         self.assertIn("接近压力且主力流出时不得追买", prompt)
         self.assertIn("洗盘观察", prompt)
 
+    def test_prompt_includes_structured_factor_summary(self) -> None:
+        with patch.object(GeminiAnalyzer, "_init_litellm", return_value=None):
+            analyzer = GeminiAnalyzer()
+
+        context = {
+            "code": "600519",
+            "stock_name": "贵州茅台",
+            "date": "2026-05-24",
+            "today": {"close": 1880.0, "ma5": 1850.0, "ma10": 1830.0, "ma20": 1800.0},
+            "factor_summary": {
+                "status": "available",
+                "source": "storage.get_data_range",
+                "as_of": "2026-05-24",
+                "bar_count": 60,
+                "returns": {"return_1d_pct": 1.2, "return_5d_pct": 3.4, "return_20d_pct": 8.9},
+                "trend": {"ma_alignment": "bullish", "ma5_distance_pct": 1.6, "ma20_distance_pct": 4.4},
+                "momentum": {"macd_state": "bullish", "rsi_6": 66.0, "rsi_12": 61.5},
+                "volatility": {"atr_14_pct": 2.1, "boll_percent_b": 0.82},
+                "volume": {"volume_ratio_20d": 1.35, "volume_pct_rank_20d": 0.9},
+                "short_term": {
+                    "range_position_20d": 0.78,
+                    "distance_to_limit_up_pct": 7.6,
+                    "distance_to_limit_down_pct": 12.4,
+                },
+            },
+        }
+
+        prompt = analyzer._format_prompt(context, "贵州茅台", news_context=None)
+
+        self.assertIn("结构化因子摘要（LLM 辅助输入）", prompt)
+        self.assertIn("storage.get_data_range", prompt)
+        self.assertIn("bullish", prompt)
+        self.assertIn("涨停/跌停距离", prompt)
+
     def test_prompt_prefers_context_news_window_days(self) -> None:
         with patch.object(GeminiAnalyzer, "_init_litellm", return_value=None):
             analyzer = GeminiAnalyzer()

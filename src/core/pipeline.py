@@ -61,6 +61,7 @@ from src.services.analysis_context_builder import (
     AnalysisContextBuilder,
     PipelineAnalysisArtifacts,
 )
+from src.factors import build_llm_factor_summary
 from src.services.run_diagnostics import (
     activate_run_diagnostic_context,
     current_diagnostic_snapshot,
@@ -508,6 +509,7 @@ class StockAnalysisPipeline:
 
             # Step 3: 趋势分析（基于交易理念）— 在 Agent 分支之前执行，供两条路径共用
             trend_result: Optional[TrendAnalysisResult] = None
+            factor_context: Optional[Dict[str, Any]] = None
             try:
                 from src.services.history_loader import get_frozen_target_date
                 _mkt = get_market_for_stock(normalize_stock_code(code))
@@ -517,6 +519,22 @@ class StockAnalysisPipeline:
                 historical_bars = self.db.get_data_range(code, start_date, end_date)
                 if historical_bars:
                     df = pd.DataFrame([bar.to_dict() for bar in historical_bars])
+                    try:
+                        factor_context = build_llm_factor_summary(
+                            df,
+                            code=code,
+                            source="storage.get_data_range",
+                            realtime_quote=(
+                                realtime_quote
+                                if self.config.enable_realtime_quote and realtime_quote
+                                else None
+                            ),
+                        )
+                    except Exception as factor_exc:
+                        logger.debug(
+                            f"{stock_name}({code}) 因子摘要计算失败: {factor_exc}",
+                            exc_info=True,
+                        )
                     # Issue #234: Augment with realtime for intraday MA calculation
                     if self.config.enable_realtime_quote and realtime_quote:
                         df = self._augment_historical_with_realtime(df, realtime_quote, code)
@@ -542,6 +560,7 @@ class StockAnalysisPipeline:
                     market_phase_summary=market_phase_summary,
                     daily_market_context=daily_market_context,
                     portfolio_context=portfolio_context,
+                    factor_context=factor_context,
                 )
 
             # Step 4: 多维度情报搜索（最新消息+风险排查+业绩预期）
@@ -640,6 +659,8 @@ class StockAnalysisPipeline:
                 market_phase_context=market_phase_context_dict,
                 portfolio_context=portfolio_context,
             )
+            if isinstance(factor_context, dict):
+                enhanced_context["factor_summary"] = factor_context
             enhanced_context["market_phase_context"] = market_phase_context_dict
             self._attach_daily_market_context(
                 enhanced_context,
@@ -663,6 +684,7 @@ class StockAnalysisPipeline:
                     enhanced_context=enhanced_context,
                     realtime_quote=realtime_quote,
                     trend_result=trend_result,
+                    factor_context=factor_context,
                     chip_data=chip_data,
                     fundamental_context=fundamental_context,
                     news_context=news_context,
@@ -1206,6 +1228,7 @@ class StockAnalysisPipeline:
         market_phase_summary: Optional[Dict[str, Any]] = None,
         daily_market_context: Optional[DailyMarketContext] = None,
         portfolio_context: Optional[Dict[str, Any]] = None,
+        factor_context: Optional[Dict[str, Any]] = None,
     ) -> Optional[AnalysisResult]:
         """
         使用 Agent 模式分析单只股票。
@@ -1248,6 +1271,8 @@ class StockAnalysisPipeline:
                 initial_context["chip_distribution"] = self._safe_to_dict(chip_data)
             if trend_result:
                 initial_context["trend_result"] = self._safe_to_dict(trend_result)
+            if isinstance(factor_context, dict):
+                initial_context["factor_summary"] = dict(factor_context)
 
             # Agent path: inject social sentiment as news_context so both
             # executor (_build_user_message) and orchestrator (ctx.set_data)
@@ -2535,6 +2560,7 @@ class StockAnalysisPipeline:
         news_result_count: Optional[int],
         query_id: str,
         portfolio_context: Optional[Dict[str, Any]] = None,
+        factor_context: Optional[Dict[str, Any]] = None,
     ) -> PipelineAnalysisArtifacts:
         return PipelineAnalysisArtifacts(
             code=code,
@@ -2545,6 +2571,7 @@ class StockAnalysisPipeline:
             enhanced_context=enhanced_context,
             realtime_quote=realtime_quote,
             trend_result=trend_result,
+            factor_context=factor_context,
             chip_data=chip_data,
             fundamental_context=fundamental_context,
             news_context=news_context,
@@ -2595,6 +2622,11 @@ class StockAnalysisPipeline:
             enhanced_context={},
             realtime_quote=initial_context.get("realtime_quote"),
             trend_result=initial_context.get("trend_result"),
+            factor_context=(
+                initial_context.get("factor_summary")
+                if isinstance(initial_context.get("factor_summary"), dict)
+                else None
+            ),
             chip_data=initial_context.get("chip_distribution"),
             fundamental_context=fundamental_context,
             news_context=initial_context.get("news_context"),

@@ -3599,6 +3599,33 @@ class GeminiAnalyzer:
 | 60日涨跌幅 | {rt.get('change_60d', 'N/A')}% | 中期表现 |
 """
 
+        factor_summary = context.get("factor_summary") if isinstance(context, dict) else None
+        if isinstance(factor_summary, dict) and factor_summary.get("status") in {"available", "partial"}:
+            factor_returns = factor_summary.get("returns") if isinstance(factor_summary.get("returns"), dict) else {}
+            factor_trend = factor_summary.get("trend") if isinstance(factor_summary.get("trend"), dict) else {}
+            factor_momentum = factor_summary.get("momentum") if isinstance(factor_summary.get("momentum"), dict) else {}
+            factor_volatility = factor_summary.get("volatility") if isinstance(factor_summary.get("volatility"), dict) else {}
+            factor_volume = factor_summary.get("volume") if isinstance(factor_summary.get("volume"), dict) else {}
+            factor_short = factor_summary.get("short_term") if isinstance(factor_summary.get("short_term"), dict) else {}
+            prompt += f"""
+### 结构化因子摘要（LLM 辅助输入）
+| 因子 | 数值 | 用法 |
+|------|------|------|
+| 数据日期 | {factor_summary.get('as_of', 'N/A')} | 来源：{factor_summary.get('source', 'N/A')} |
+| 样本条数 | {factor_summary.get('bar_count', 'N/A')} | 少于20条时仅作弱参考 |
+| 1日/5日/20日收益 | {factor_returns.get('return_1d_pct', 'N/A')}% / {factor_returns.get('return_5d_pct', 'N/A')}% / {factor_returns.get('return_20d_pct', 'N/A')}% | 短中期价格动量 |
+| 均线排列 | {factor_trend.get('ma_alignment', 'N/A')} | bullish/bearish/mixed |
+| MA5/MA20偏离 | {factor_trend.get('ma5_distance_pct', 'N/A')}% / {factor_trend.get('ma20_distance_pct', 'N/A')}% | 判断追高或回踩 |
+| MACD状态 | {factor_momentum.get('macd_state', 'N/A')} | 趋势加速/转弱参考 |
+| RSI6/RSI12 | {factor_momentum.get('rsi_6', 'N/A')} / {factor_momentum.get('rsi_12', 'N/A')} | 超买超卖参考 |
+| ATR14/布林%B | {factor_volatility.get('atr_14_pct', 'N/A')}% / {factor_volatility.get('boll_percent_b', 'N/A')} | 波动与通道位置 |
+| 20日量比/量能分位 | {factor_volume.get('volume_ratio_20d', 'N/A')} / {factor_volume.get('volume_pct_rank_20d', 'N/A')} | 量价确认 |
+| 20日区间位置 | {factor_short.get('range_position_20d', 'N/A')} | 0接近低位，1接近高位 |
+| 涨停/跌停距离 | {factor_short.get('distance_to_limit_up_pct', 'N/A')}% / {factor_short.get('distance_to_limit_down_pct', 'N/A')}% | A股短线风险边界 |
+
+> 因子摘要来自已获取行情的派生计算，只能辅助校准价格、动量、波动和量能判断；不得替代新闻、基本面、资金流或风险事件证据。
+"""
+
         # 添加财报与分红（价值投资口径）
         fundamental_context = context.get("fundamental_context") if isinstance(context, dict) else None
         earnings_block = (

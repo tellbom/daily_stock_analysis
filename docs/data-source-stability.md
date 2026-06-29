@@ -17,7 +17,7 @@
 
 | 场景 | 已接入源 | 默认使用方式 | 失败处理 |
 | --- | --- | --- | --- |
-| A 股日线 / 技术面 | Efinance、Tencent、AkShare、Tushare、Pytdx、Baostock、YFinance | `DataFetcherManager` 按优先级尝试；配置 `TUSHARE_TOKEN` 后 Tushare 自动进入候选源 | 单源失败后尝试下一个源；连续失败会短期熔断该源 |
+| A 股日线 / 技术面 | StockAnalysisAkshare、Efinance、Tencent、AkShare、Tushare、Pytdx、Baostock、YFinance | `DataFetcherManager` 按优先级尝试；默认先用 stock-analysis 风格 AKShare 顺序（新浪 `stock_zh_a_daily` -> 东财 `stock_zh_a_hist`）；配置 `TUSHARE_TOKEN` 后 Tushare 仅作为后备候选源 | 单源失败后尝试下一个源；连续失败会短期熔断该源 |
 | A 股实时行情 | Tencent、AkShare Sina、Efinance、AkShare EM、Tushare | `REALTIME_SOURCE_PRIORITY` 控制顺序，默认偏向 Tencent / Sina 这类轻量源 | 失败源记录 `fallback_from`，成功源继续返回 |
 | A 股大盘复盘 | TickFlow、AkShare、Tushare、Efinance | 配置 `TICKFLOW_API_KEY` 后，主指数和市场宽度优先尝试 TickFlow | TickFlow 权限不足或失败时回退 AkShare / Tushare / Efinance 链路 |
 | AlphaSift 选股快照 | Tushare、Sina、Efinance、AkShare EM、EastMoney Datacenter | 有 `TUSHARE_TOKEN` 时自动把 `tushare` 放入快照优先级；否则使用免费源链路 | AlphaSift 维护 source health；DSA 状态接口透出 snapshot/daily health |
@@ -130,7 +130,7 @@ ENABLE_EASTMONEY_PATCH=true
 
 ### A 股稳定模式
 
-适合经常跑选股、批量分析或对外服务。Tushare 用于增强 A 股稳定性，TickFlow 用于增强 A 股大盘复盘；免费源继续作为兜底。
+适合经常跑选股、批量分析或对外服务。普通 A 股日线默认优先使用 stock-analysis 风格 AKShare 链路，Tushare 只作为可选后备源；TickFlow 用于增强 A 股大盘复盘；免费源继续作为兜底。
 
 ```env
 TUSHARE_TOKEN=your_tushare_token

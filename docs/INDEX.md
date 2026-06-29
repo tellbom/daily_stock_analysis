@@ -22,6 +22,7 @@
 | --- | --- |
 | [README](../README.md) | 项目定位、核心能力、快速开始、推送效果 |
 | [小白客户端安装与配置](beginner-client-setup.md) | 面向不会代码用户的客户端下载、Anspire Open / AIHubMix 模型配置、新闻源配置和常见问题 |
+| [本地 Python 服务部署说明](local-python-service.md) | 使用 `.env` 和 `scripts/start-local-service.sh` 在本机复现 Web/API 服务部署 |
 | [完整配置与部署指南](full-guide.md) | 环境准备、运行方式、配置说明、部署路径和常见问题 |
 | [FAQ](FAQ.md) | 常见配置、模型、通知、部署和运行问题 |
 | [数据源稳定性与故障处理图示](data-source-stability.md) | Tushare、TickFlow、AkShare、Efinance、YFinance、Longbridge 等已接入源的使用场景、fallback 链路和推荐配置 |
@@ -55,6 +56,7 @@
 | 文档 | 内容 |
 | --- | --- |
 | [部署指南](DEPLOY.md) | 服务器部署、Docker、systemd、Supervisor 等部署方式 |
+| [本地 Python 服务部署说明](local-python-service.md) | 本地虚拟环境、`.env`、Web/API 服务启动和停止方式 |
 | [云端 WebUI 部署](deploy-webui-cloud.md) | 云服务器访问 WebUI 的部署说明 |
 | [Zeabur 部署](docker/zeabur-deployment.md) | Zeabur 平台部署说明 |
 | [桌面端打包说明](desktop-package.md) | Electron 桌面端和 Web 构建产物打包说明 |

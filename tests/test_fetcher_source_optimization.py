@@ -116,6 +116,9 @@ class TestFetcherSourceOptimization(unittest.TestCase):
                 "LONGBRIDGE_APP_SECRET": "",
                 "LONGBRIDGE_ACCESS_TOKEN": "",
             },
+        ), patch(
+            "data_provider.stock_analysis_akshare_fetcher.StockAnalysisAkshareFetcher",
+            return_value=_StubFetcher("StockAnalysisAkshareFetcher", -2),
         ), patch("data_provider.efinance_fetcher.EfinanceFetcher", return_value=_StubFetcher("EfinanceFetcher", 0)), patch(
             "data_provider.tencent_fetcher.TencentFetcher",
             return_value=_StubFetcher("TencentFetcher", 0),
@@ -144,6 +147,7 @@ class TestFetcherSourceOptimization(unittest.TestCase):
         self.assertEqual(
             manager.available_fetchers,
             [
+                "StockAnalysisAkshareFetcher",
                 "EfinanceFetcher",
                 "TencentFetcher",
                 "AkshareFetcher",
@@ -165,7 +169,10 @@ class TestFetcherSourceOptimization(unittest.TestCase):
             longbridge_oauth_client_id="client-1",
         )
 
-        with patch("data_provider.efinance_fetcher.EfinanceFetcher", return_value=_StubFetcher("EfinanceFetcher", 0)), patch(
+        with patch(
+            "data_provider.stock_analysis_akshare_fetcher.StockAnalysisAkshareFetcher",
+            return_value=_StubFetcher("StockAnalysisAkshareFetcher", -2),
+        ), patch("data_provider.efinance_fetcher.EfinanceFetcher", return_value=_StubFetcher("EfinanceFetcher", 0)), patch(
             "data_provider.tencent_fetcher.TencentFetcher",
             return_value=_StubFetcher("TencentFetcher", 0),
         ), patch(

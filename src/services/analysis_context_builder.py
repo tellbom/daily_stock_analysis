@@ -72,6 +72,7 @@ class PipelineAnalysisArtifacts:
     news_result_count: Optional[int]
     metadata: Dict[str, Any]
     portfolio_context: Optional[Dict[str, Any]] = None
+    factor_context: Optional[Dict[str, Any]] = None
 
 
 class AnalysisContextBuilder:
@@ -91,6 +92,7 @@ class AnalysisContextBuilder:
         technical_block, technical_warnings = _build_technical_block(artifacts)
         blocks["technical"] = technical_block
         data_quality_warnings.extend(technical_warnings)
+        blocks["factors"] = _build_factors_block(artifacts)
         blocks["chip"] = _build_chip_block(artifacts)
         blocks["fundamentals"] = _build_fundamentals_block(artifacts)
         blocks["news"] = _build_news_block(artifacts)
@@ -351,6 +353,56 @@ def _build_chip_block(artifacts: PipelineAnalysisArtifacts) -> AnalysisContextBl
         },
         source=source,
         metadata={"date": chip.get("date")} if chip.get("date") else {},
+    )
+
+
+def _build_factors_block(artifacts: PipelineAnalysisArtifacts) -> AnalysisContextBlock:
+    context = artifacts.factor_context if isinstance(artifacts.factor_context, dict) else None
+    if context is None:
+        enhanced = artifacts.enhanced_context if isinstance(artifacts.enhanced_context, dict) else {}
+        candidate = enhanced.get("factor_summary")
+        context = candidate if isinstance(candidate, dict) else None
+
+    if not context:
+        return AnalysisContextBlock(
+            status=ContextFieldStatus.MISSING,
+            items={
+                "factor_summary": AnalysisContextItem(
+                    status=ContextFieldStatus.MISSING,
+                    missing_reason="factor_context_missing",
+                )
+            },
+            metadata={"auxiliary": True, "quality_weighted": False},
+        )
+
+    status = _factor_status(context.get("status"))
+    source = _source_text(context.get("source")) or "daily_bars"
+    missing_reason = context.get("missing_reason") if status == ContextFieldStatus.MISSING else None
+    warnings = _list_text(context.get("warnings"))
+    metadata = {
+        key: value
+        for key, value in {
+            "as_of": context.get("as_of"),
+            "bar_count": context.get("bar_count"),
+            "auxiliary": True,
+            "quality_weighted": False,
+        }.items()
+        if value not in (None, "", [], {})
+    }
+    return AnalysisContextBlock(
+        status=status,
+        items={
+            "factor_summary": AnalysisContextItem(
+                status=status,
+                value=context,
+                source=source,
+                missing_reason=str(missing_reason) if missing_reason else None,
+                warnings=warnings,
+            )
+        },
+        source=source,
+        warnings=warnings,
+        metadata=metadata,
     )
 
 
@@ -744,6 +796,25 @@ def _fundamental_status(status: str) -> ContextFieldStatus:
     if status == "failed":
         return ContextFieldStatus.FETCH_FAILED
     return ContextFieldStatus.MISSING
+
+
+def _factor_status(status: Any) -> ContextFieldStatus:
+    normalized = str(status or "").strip().lower()
+    if normalized in {"available", "ok"}:
+        return ContextFieldStatus.AVAILABLE
+    if normalized in {"partial", "limited"}:
+        return ContextFieldStatus.PARTIAL
+    if normalized in {"failed", "fetch_failed"}:
+        return ContextFieldStatus.FETCH_FAILED
+    if normalized in {"missing", "not_supported"}:
+        return ContextFieldStatus.MISSING
+    return ContextFieldStatus.AVAILABLE
+
+
+def _list_text(value: Any) -> List[str]:
+    if not isinstance(value, list):
+        return []
+    return [str(item) for item in value if item not in (None, "")]
 
 
 def _fundamental_payload_status(
