@@ -869,6 +869,8 @@ P3 在普通分析和 Agent 初始上下文中接入 `AnalysisContextPack` 低�
 
 普通分析会额外把当前项目内部 `src/factors/` 生成的 `enhanced_context.factor_summary` 渲染为“结构化因子摘要（LLM 辅助输入）”，覆盖均线偏离、MACD、RSI、布林、ATR、量能、20 日区间位置和 A 股涨跌停距离。该摘要只基于 pipeline 已有日线和可选实时价派生，不读取外部项目源码、不新增训练/回测/数据湖依赖，也不替代资金流、基本面、新闻或风险事件证据。
 
+普通分析和 Agent 路径还会构建轻量 `event_context`：当前实现由 `src/services/event_context.py` 在项目内部调用数据源 fetcher，优先标准化个股公告、业绩预告/快报、个股新闻、研报标题/评级变化，以及由基本面/板块上下文派生的行业事件摘要。LLM 不直接无约束联网搜索，只消费已经注入的结构化事件条目和 `event_digest`；公告与业绩公告按确认事实优先，普通新闻、研报标题和行业衍生事件默认作为不确定线索。所有事件必须有可解析发布时间，并满足 `publish_time <= as_of_date`；未来发布时间、时间未知或超出窗口的非公告事件会被过滤。新闻/公告接口失败时仅把 `event_context.status` 标为 `partial`/`failed` 并写入 warning，不阻断技术面、因子、基本面和主 LLM 分析流程。
+
 P3 当时不新增 API/Web/Bot 参数，不写入 history/task status/report metadata，不改变报告 JSON schema，也不把完整 pack 暴露到历史、通知或 Web。Agent 工具级复用 pack 数据和 P5 数据质量评分留给后续阶段。
 
 #### AnalysisContextPack 低敏可见性（Issue #1389 P4）

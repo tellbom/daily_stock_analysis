@@ -564,7 +564,13 @@ class TestAgentResultConversion(unittest.TestCase):
              patch('src.core.pipeline.DataFetcherManager'), \
              patch('src.core.pipeline.GeminiAnalyzer'), \
              patch('src.core.pipeline.NotificationService'), \
-             patch('src.core.pipeline.SearchService'):
+             patch('src.core.pipeline.SearchService'), \
+             patch('src.core.pipeline.StockAnalysisPipeline._load_daily_market_context', return_value=None), \
+             patch('src.core.pipeline.build_event_context', return_value={
+                 "status": "missing",
+                 "items": [],
+                 "event_digest": {"status": "no_recent_events_found"},
+             }):
 
             mock_cfg = MagicMock()
             mock_cfg.max_workers = 2
@@ -1504,7 +1510,13 @@ class TestPipelineRouting(unittest.TestCase):
              patch('src.core.pipeline.DataFetcherManager'), \
              patch('src.core.pipeline.GeminiAnalyzer'), \
              patch('src.core.pipeline.NotificationService'), \
-             patch('src.core.pipeline.SearchService'):
+             patch('src.core.pipeline.SearchService'), \
+             patch('src.core.pipeline.StockAnalysisPipeline._load_daily_market_context', return_value=None), \
+             patch('src.core.pipeline.build_event_context', return_value={
+                 "status": "missing",
+                 "items": [],
+                 "event_digest": {"status": "no_recent_events_found"},
+             }):
 
             mock_cfg = MagicMock()
             mock_cfg.max_workers = 2

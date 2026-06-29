@@ -59,7 +59,8 @@ P1 Block Catalog：
 | `daily_bars` | 完整日线窗口和最近完整日线日期 | P1 不判断 partial bar。 |
 | `technical` | 技术指标、量价结构和形态 | P1 不生成指标。 |
 | `fundamentals` | 估值、成长、盈利、财报和股东回报 | P1 不新增基本面 fetcher。 |
-| `news` | 新闻、公告、舆情和催化事件输入 | P1 不改变新闻搜索。 |
+| `events` | 结构化事件上下文，包含公告、新闻、研报标题和行业/板块事件摘要 | 辅助块，不参与固定质量评分；事件抓取失败只降级该块。 |
+| `news` | 通用新闻、舆情和本地情报文本输入 | 保留既有新闻搜索与持久化链路。 |
 | `portfolio` | 是否持仓、账户摘要、成本、数量、仓位和 stale 摘要 | P1 不纳入交易流水、现金流水或完整账户隐私数据。 |
 | `chip` / `capital_flow` | 筹码、资金流和主力行为 | 后续扩展键，P1 只允许契约表达。 |
 | `events` / `market_context` | 风险事件、市场宽度、指数、板块和热点环境 | 后续扩展键，不把 `market_review` / `market_light` 作为首版单股 pack。 |
@@ -88,6 +89,7 @@ P2 block 组装边界：
 - `enhanced_context.today` 上的 `is_partial_bar`、`is_estimated`、`estimated_fields` 优先进入 `technical`；缺失时仍兼容 `enhanced_context.today.data_source` 为 `realtime:*` 的旧 heuristic。partial/estimated 只进入 `technical`，`daily_bars` 不承载 partial/estimated，warning 使用 `intraday_realtime_overlay`。
 - `technical` 优先复用 `trend_result.to_dict()`；无 trend artifact 时为 `missing`。
 - `factors` 复用 pipeline 基于已取日线生成的 `factor_context` / `enhanced_context.factor_summary`；该块只表达派生因子摘要状态、来源、样本数和 warning，标记为辅助且不参与 P5 固定质量评分。它不触发新抓取，不引用外部项目源码，也不迁移训练、回测或数据湖逻辑。
+- `events` 复用 pipeline 内部 `event_context`，由 `src/services/event_context.py` 统一标准化公告、新闻、研报标题和行业/板块事件摘要。事件条目包含 `type`、`title`、`publish_time`、`source`、`url/source_id`、`summary`、`tags`、`risk_level`、`is_confirmed`，并在构建时过滤 `publish_time > as_of_date` 的未来信息。该块同样是辅助块，不参与固定质量评分；接口失败只影响 `events` 状态，不阻断主分析。
 - `chip` 复用 `chip_data.to_dict()`；无 chip artifact 默认 `missing`，只有输入 metadata/artifact 明确 not_supported 时才标 `not_supported`。
 - `fundamentals` 只读 `fundamental_context` 参数；`ok` 映射为 `available`，`not_supported` 映射为 `not_supported`，`partial` 映射为 `partial`，P5 后 `failed` 映射为 `fetch_failed` + 稳定 reason code `fundamental_pipeline_failed`；不写入 `errors[]` 原文。
 - `news` 非空白字符串为 `available`，空白或缺失为 `missing`；`news_result_count` 写入 pack metadata。
@@ -98,7 +100,7 @@ P2 不组装 `events`、`market_context`，也不把 `capital_flow` 拆成独立
 
 P3 在 P2 `AnalysisContextBuilder` 之后接入运行态消费，但消费面限定为低敏 `analysis_context_pack_summary`。`StockAnalysisPipeline` 是 summary 的唯一生产者：在普通分析路径和 Agent 路径内完成 `PipelineAnalysisArtifacts` -> `AnalysisContextBuilder.build()` -> `format_analysis_context_pack_prompt_section()`，下游 analyzer、single-agent、multi-agent 只接收 summary 字符串，不自行构造完整 pack，也不读取 `AnalysisContextPack.to_safe_dict()` 的 block item 原始值。
 
-普通分析 Prompt 的顺序固定为：基础信息 -> #1386 `market_phase_context` 渲染区块 -> `analysis_context_pack_summary` -> 技术面、实时行情、结构化因子摘要、新闻等既有区块。`analysis_context_pack_summary` 只包含 subject、`pack_version`、block `status` / `source` / `warnings` / `missing_reason`、`metadata.news_result_count`、`data_quality.warnings` 和 P5 低敏数据限制，不得输出 `news.content`、`trend_result`、`chip`、`fundamental_context` 等原始 payload；新增 `factor_summary` 同样不通过该 summary 输出原始 payload。普通分析的完整 prompt 另有 `enhanced_context.factor_summary` 数值表，用于给 LLM 提供均线偏离、MACD、RSI、布林、ATR、量能和短线涨跌停距离等派生因子；该数值表来自当前项目内部 `src/factors/`，不由 pack summary 承担脱敏或公开展示职责。
+普通分析 Prompt 的顺序固定为：基础信息 -> #1386 `market_phase_context` 渲染区块 -> `analysis_context_pack_summary` -> 技术面、实时行情、结构化因子摘要、结构化事件上下文、新闻等既有区块。`analysis_context_pack_summary` 只包含 subject、`pack_version`、block `status` / `source` / `warnings` / `missing_reason`、`metadata.news_result_count`、`data_quality.warnings` 和 P5 低敏数据限制，不得输出 `news.content`、`trend_result`、`chip`、`fundamental_context` 等原始 payload；新增 `factor_summary` 和 `event_context` 同样不通过该 summary 输出原始 payload。普通分析的完整 prompt 另有 `enhanced_context.factor_summary` 数值表和 `enhanced_context.event_context` 事件表，前者给 LLM 提供均线偏离、MACD、RSI、布林、ATR、量能和短线涨跌停距离等派生因子，后者给 LLM 提供公告、新闻、研报标题和行业事件的结构化事实输入；两者均来自当前项目内部模块，不由 pack summary 承担脱敏或公开展示职责。
 
 Agent 路径同样只传 summary。`AgentExecutor._build_user_message()` 在 market phase 段之后、pre-fetched JSON 之前插入 summary；`AgentOrchestrator._build_context()` 只把 summary 放入 `ctx.meta["analysis_context_pack_summary"]`，禁止写入 `ctx.data`；`BaseAgent._build_messages()` 在 market phase user message 之后、`_inject_cached_data()` 之前插入 summary。Agent 路径会在 `_ensure_agent_history()` 预取后读取一次 `storage.get_analysis_context()` 作为 `daily_bars` 的低敏状态来源，读取失败或无可用上下文时才标记 `daily_bars_missing`，该读取 fail-open 且不把日线原始 payload 写入 Agent runtime context。Agent 首轮没有复用普通分析新闻检索，`news` block 为 `missing` 是当前 P3 的预期状态。
 

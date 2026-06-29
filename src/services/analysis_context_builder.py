@@ -73,6 +73,7 @@ class PipelineAnalysisArtifacts:
     metadata: Dict[str, Any]
     portfolio_context: Optional[Dict[str, Any]] = None
     factor_context: Optional[Dict[str, Any]] = None
+    event_context: Optional[Dict[str, Any]] = None
 
 
 class AnalysisContextBuilder:
@@ -93,6 +94,7 @@ class AnalysisContextBuilder:
         blocks["technical"] = technical_block
         data_quality_warnings.extend(technical_warnings)
         blocks["factors"] = _build_factors_block(artifacts)
+        blocks["events"] = _build_events_block(artifacts)
         blocks["chip"] = _build_chip_block(artifacts)
         blocks["fundamentals"] = _build_fundamentals_block(artifacts)
         blocks["news"] = _build_news_block(artifacts)
@@ -399,6 +401,77 @@ def _build_factors_block(artifacts: PipelineAnalysisArtifacts) -> AnalysisContex
                 missing_reason=str(missing_reason) if missing_reason else None,
                 warnings=warnings,
             )
+        },
+        source=source,
+        warnings=warnings,
+        metadata=metadata,
+    )
+
+
+def _build_events_block(artifacts: PipelineAnalysisArtifacts) -> AnalysisContextBlock:
+    context = artifacts.event_context if isinstance(artifacts.event_context, dict) else None
+    if context is None:
+        enhanced = artifacts.enhanced_context if isinstance(artifacts.enhanced_context, dict) else {}
+        candidate = enhanced.get("event_context")
+        context = candidate if isinstance(candidate, dict) else None
+
+    if not context:
+        return AnalysisContextBlock(
+            status=ContextFieldStatus.MISSING,
+            items={
+                "event_context": AnalysisContextItem(
+                    status=ContextFieldStatus.MISSING,
+                    missing_reason="event_context_missing",
+                )
+            },
+            metadata={"auxiliary": True, "quality_weighted": False},
+        )
+
+    status = _event_context_status(context.get("status"))
+    source = _source_from_chain(context.get("source_chain")) or "event_context"
+    warnings = _list_text(context.get("warnings"))
+    items_value = context.get("items") if isinstance(context.get("items"), list) else []
+    digest_value = (
+        context.get("event_digest")
+        if isinstance(context.get("event_digest"), dict)
+        else None
+    )
+    metadata = {
+        key: value
+        for key, value in {
+            "as_of_date": context.get("as_of_date"),
+            "event_count": len(items_value),
+            "counts_by_type": (
+                context.get("counts_by_type")
+                if isinstance(context.get("counts_by_type"), dict)
+                else None
+            ),
+            "auxiliary": True,
+            "quality_weighted": False,
+        }.items()
+        if value not in (None, "", [], {})
+    }
+    missing_reason = "event_context_missing" if status == ContextFieldStatus.MISSING else None
+    if status == ContextFieldStatus.FETCH_FAILED:
+        missing_reason = "event_context_fetch_failed"
+
+    return AnalysisContextBlock(
+        status=status,
+        items={
+            "items": AnalysisContextItem(
+                status=status if items_value else ContextFieldStatus.MISSING,
+                value=items_value or None,
+                source=source,
+                missing_reason="event_items_missing" if not items_value else None,
+                warnings=warnings,
+            ),
+            "event_digest": AnalysisContextItem(
+                status=status if digest_value else ContextFieldStatus.MISSING,
+                value=digest_value,
+                source=source,
+                missing_reason=missing_reason if not digest_value else None,
+                warnings=warnings,
+            ),
         },
         source=source,
         warnings=warnings,
@@ -807,6 +880,19 @@ def _factor_status(status: Any) -> ContextFieldStatus:
     if normalized in {"failed", "fetch_failed"}:
         return ContextFieldStatus.FETCH_FAILED
     if normalized in {"missing", "not_supported"}:
+        return ContextFieldStatus.MISSING
+    return ContextFieldStatus.AVAILABLE
+
+
+def _event_context_status(status: Any) -> ContextFieldStatus:
+    normalized = str(status or "").strip().lower()
+    if normalized in {"available", "ok"}:
+        return ContextFieldStatus.AVAILABLE
+    if normalized in {"partial", "limited"}:
+        return ContextFieldStatus.PARTIAL
+    if normalized in {"failed", "fetch_failed"}:
+        return ContextFieldStatus.FETCH_FAILED
+    if normalized in {"missing", "empty", "no_recent_events_found", "not_supported"}:
         return ContextFieldStatus.MISSING
     return ContextFieldStatus.AVAILABLE
 

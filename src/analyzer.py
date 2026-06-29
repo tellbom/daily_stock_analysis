@@ -572,6 +572,13 @@ def _safe_float(v: Any, default: float = 0.0) -> float:
         return default
 
 
+def _prompt_table_cell(value: Any, *, max_len: int = 120) -> str:
+    text = str(value or "").strip().replace("\n", " ").replace("|", "/")
+    if len(text) > max_len:
+        return text[: max_len - 1] + "…"
+    return text or "N/A"
+
+
 def _coerce_chip_metric(v: Any) -> Optional[float]:
     """Convert chip metrics while preserving the distinction between missing and zero."""
     if v is None:
@@ -3626,6 +3633,73 @@ class GeminiAnalyzer:
 > 因子摘要来自已获取行情的派生计算，只能辅助校准价格、动量、波动和量能判断；不得替代新闻、基本面、资金流或风险事件证据。
 """
 
+        event_context = context.get("event_context") if isinstance(context, dict) else None
+        if isinstance(event_context, dict):
+            event_digest = (
+                event_context.get("event_digest")
+                if isinstance(event_context.get("event_digest"), dict)
+                else {}
+            )
+            event_items = (
+                event_context.get("items")
+                if isinstance(event_context.get("items"), list)
+                else []
+            )
+            if event_items:
+                event_rows = []
+                for item in event_items[:8]:
+                    if not isinstance(item, dict):
+                        continue
+                    tags = item.get("tags") if isinstance(item.get("tags"), list) else []
+                    confirmed = "是" if item.get("is_confirmed") else "否"
+                    event_rows.append(
+                        "| {type} | {date} | {source} | {title} | {tags} | {risk} | {confirmed} |".format(
+                            type=_prompt_table_cell(item.get("type"), max_len=24),
+                            date=_prompt_table_cell(item.get("publish_time"), max_len=16),
+                            source=_prompt_table_cell(item.get("source"), max_len=32),
+                            title=_prompt_table_cell(item.get("title"), max_len=80),
+                            tags=_prompt_table_cell("、".join(str(tag) for tag in tags), max_len=50),
+                            risk=_prompt_table_cell(item.get("risk_level"), max_len=16),
+                            confirmed=confirmed,
+                        )
+                    )
+                event_rows_text = "\n".join(event_rows) or "| N/A | N/A | N/A | N/A | N/A | N/A | N/A |"
+                positive_text = _prompt_table_cell(
+                    "；".join(event_digest.get("positive_catalysts", [])[:3]),
+                    max_len=220,
+                )
+                negative_text = _prompt_table_cell(
+                    "；".join(event_digest.get("negative_risks", [])[:3]),
+                    max_len=220,
+                )
+                uncertainty_text = _prompt_table_cell(
+                    "；".join(event_digest.get("uncertainties", [])[:3]),
+                    max_len=220,
+                )
+                prompt += f"""
+### 结构化事件上下文（新闻 / 公告 / 研报 / 行业事件）
+| 项目 | 内容 |
+|------|------|
+| 截止日期 | {event_context.get('as_of_date', 'N/A')} |
+| 事件偏向 | {event_digest.get('event_bias', 'N/A')} |
+| 利好催化 | {positive_text} |
+| 负面风险 | {negative_text} |
+| 不确定性 | {uncertainty_text} |
+
+| 类型 | 发布时间 | 来源 | 标题 | 标签 | 风险级别 | 已确认 |
+|------|----------|------|------|------|----------|--------|
+{event_rows_text}
+
+> 事件上下文由项目数据源 fetcher 检索后注入，不允许自行扩展搜索或虚构未列出的新闻/公告。公告和业绩预告/快报优先于普通新闻；`is_confirmed=false` 的新闻、研报标题或行业衍生事件只能作为不确定线索，不能当成已确认事实。输出时请区分技术因子信号、事件催化、公告风险和新闻不确定性。
+"""
+            elif event_digest.get("status") == "no_recent_events_found":
+                prompt += """
+### 结构化事件上下文（新闻 / 公告 / 研报 / 行业事件）
+no_recent_events_found
+
+> 未找到可注入的近期事件。请勿编造新闻、公告或研报结论；消息面相关字段只能写“未发现近期事件”或基于已有技术/基本面数据说明限制。
+"""
+
         # 添加财报与分红（价值投资口径）
         fundamental_context = context.get("fundamental_context") if isinstance(context, dict) else None
         earnings_block = (
@@ -3936,6 +4010,7 @@ class GeminiAnalyzer:
 - **具体狙击点位**：买入价、止损价、目标价（精确到分）
 - **检查清单**：每项用 ✅/⚠️/❌ 标记
 - **消息面时间合规**：`latest_news`、`risk_alerts`、`positive_catalysts` 不得包含超出近{news_window_days}日或时间未知的信息
+- **事件上下文合规**：只能基于已注入的 `event_context` / `news_context` 归纳事件，不得自行联网搜索或虚构新闻；公告风险优先于普通新闻，未确认新闻必须标注不确定性
 - **技术面一致性**：严禁把“空头排列”和“多头排列”等互斥结论同时当作有效依据；若基本面/事件面与技术面冲突，必须明确写“事件先行、技术待确认”或“基本面偏多，但技术面尚未确认”
  
 请输出完整的 JSON 格式决策仪表盘。"""

@@ -248,6 +248,89 @@ class AnalyzerNewsPromptTestCase(unittest.TestCase):
         self.assertIn("bullish", prompt)
         self.assertIn("涨停/跌停距离", prompt)
 
+    def test_prompt_includes_structured_event_context_and_guardrails(self) -> None:
+        with patch.object(GeminiAnalyzer, "_init_litellm", return_value=None):
+            analyzer = GeminiAnalyzer()
+
+        context = {
+            "code": "600519",
+            "stock_name": "贵州茅台",
+            "date": "2026-05-24",
+            "today": {"close": 1880.0},
+            "event_context": {
+                "status": "available",
+                "as_of_date": "2026-05-24",
+                "items": [
+                    {
+                        "type": "announcement",
+                        "title": "贵州茅台发布利润增长公告",
+                        "publish_time": "2026-05-24",
+                        "source": "交易所公告",
+                        "summary": "归母净利润增长",
+                        "tags": ["announcement", "earnings", "catalyst"],
+                        "risk_level": "low",
+                        "is_confirmed": True,
+                    },
+                    {
+                        "type": "news",
+                        "title": "市场传闻渠道调整",
+                        "publish_time": "2026-05-23",
+                        "source": "财经媒体",
+                        "summary": "未经公告确认",
+                        "tags": ["news", "risk"],
+                        "risk_level": "medium",
+                        "is_confirmed": False,
+                    },
+                ],
+                "event_digest": {
+                    "status": "available",
+                    "positive_catalysts": ["2026-05-24 贵州茅台发布利润增长公告"],
+                    "negative_risks": ["2026-05-23 市场传闻渠道调整"],
+                    "uncertainties": ["2026-05-23 市场传闻渠道调整（未确认新闻/衍生事件，需公告或权威来源验证）"],
+                    "event_bias": "mixed",
+                    "important_events": [],
+                },
+            },
+        }
+
+        prompt = analyzer._format_prompt(context, "贵州茅台", news_context=None)
+
+        self.assertIn("结构化事件上下文", prompt)
+        self.assertIn("贵州茅台发布利润增长公告", prompt)
+        self.assertIn("市场传闻渠道调整", prompt)
+        self.assertIn("公告和业绩预告/快报优先于普通新闻", prompt)
+        self.assertIn("不允许自行扩展搜索或虚构未列出的新闻/公告", prompt)
+        self.assertIn("事件上下文合规", prompt)
+
+    def test_prompt_marks_empty_event_context_as_no_recent_events_found(self) -> None:
+        with patch.object(GeminiAnalyzer, "_init_litellm", return_value=None):
+            analyzer = GeminiAnalyzer()
+
+        context = {
+            "code": "600519",
+            "stock_name": "贵州茅台",
+            "date": "2026-05-24",
+            "today": {"close": 1880.0},
+            "event_context": {
+                "status": "missing",
+                "as_of_date": "2026-05-24",
+                "items": [],
+                "event_digest": {
+                    "status": "no_recent_events_found",
+                    "positive_catalysts": [],
+                    "negative_risks": [],
+                    "uncertainties": ["no_recent_events_found"],
+                    "event_bias": "no_recent_events_found",
+                    "important_events": [],
+                },
+            },
+        }
+
+        prompt = analyzer._format_prompt(context, "贵州茅台", news_context=None)
+
+        self.assertIn("no_recent_events_found", prompt)
+        self.assertIn("请勿编造新闻、公告或研报结论", prompt)
+
     def test_prompt_prefers_context_news_window_days(self) -> None:
         with patch.object(GeminiAnalyzer, "_init_litellm", return_value=None):
             analyzer = GeminiAnalyzer()

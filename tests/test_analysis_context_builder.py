@@ -480,6 +480,50 @@ def test_factor_block_is_auxiliary_and_uses_migrated_summary() -> None:
     assert "factors" not in pack.data_quality.block_scores
 
 
+def test_event_block_is_auxiliary_and_exposes_structured_digest() -> None:
+    pack = AnalysisContextBuilder.build(
+        _artifacts(
+            event_context={
+                "status": "partial",
+                "as_of_date": "2026-05-24",
+                "items": [
+                    {
+                        "type": "announcement",
+                        "title": "贵州茅台发布利润增长公告",
+                        "publish_time": "2026-05-24",
+                        "source": "交易所公告",
+                        "summary": "归母净利润增长",
+                        "tags": ["announcement", "earnings", "catalyst"],
+                        "risk_level": "low",
+                        "is_confirmed": True,
+                    }
+                ],
+                "event_digest": {
+                    "status": "available",
+                    "positive_catalysts": ["2026-05-24 贵州茅台发布利润增长公告"],
+                    "negative_risks": [],
+                    "uncertainties": [],
+                    "event_bias": "positive",
+                    "important_events": [],
+                },
+                "counts_by_type": {"announcement": 1},
+                "warnings": ["news_fetch_failed:TimeoutError"],
+                "source_chain": [
+                    {"provider": "akshare.stock_notice_report", "result": "ok"}
+                ],
+            }
+        )
+    )
+
+    block = pack.blocks["events"]
+    assert block.status == ContextFieldStatus.PARTIAL
+    assert block.source == "akshare.stock_notice_report"
+    assert block.metadata["event_count"] == 1
+    assert block.metadata["quality_weighted"] is False
+    assert block.items["event_digest"].value["event_bias"] == "positive"
+    assert "events" not in pack.data_quality.block_scores
+
+
 def test_portfolio_block_is_auxiliary_and_does_not_change_quality_score() -> None:
     baseline = AnalysisContextBuilder.build(_artifacts())
     pack = AnalysisContextBuilder.build(

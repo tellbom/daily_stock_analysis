@@ -62,6 +62,7 @@ from src.services.analysis_context_builder import (
     PipelineAnalysisArtifacts,
 )
 from src.factors import build_llm_factor_summary
+from src.services.event_context import build_event_context
 from src.services.run_diagnostics import (
     activate_run_diagnostic_context,
     current_diagnostic_snapshot,
@@ -544,6 +545,48 @@ class StockAnalysisPipeline:
             except Exception as e:
                 logger.warning(f"{stock_name}({code}) 趋势分析失败: {e}", exc_info=True)
 
+            event_context: Optional[Dict[str, Any]] = None
+            try:
+                raw_event_window = None
+                effective_window = getattr(self.config, "get_effective_news_window_days", None)
+                if callable(effective_window):
+                    raw_event_window = effective_window()
+                if raw_event_window is None:
+                    raw_event_window = getattr(self.search_service, "news_window_days", 7)
+                event_window_days = max(1, int(raw_event_window or 7))
+                event_context = build_event_context(
+                    code,
+                    stock_name=stock_name,
+                    as_of_date=daily_market_target_date,
+                    fundamental_context=fundamental_context,
+                    lookback_days=event_window_days,
+                    max_items=20,
+                )
+                logger.info(
+                    "%s(%s) 事件上下文构建完成: status=%s, items=%s",
+                    stock_name,
+                    code,
+                    event_context.get("status"),
+                    len(event_context.get("items", [])),
+                )
+            except Exception as e:
+                logger.warning(f"{stock_name}({code}) 事件上下文构建失败，已降级跳过: {e}")
+                event_context = {
+                    "status": "failed",
+                    "as_of_date": daily_market_target_date.isoformat() if daily_market_target_date else None,
+                    "items": [],
+                    "event_digest": {
+                        "status": "no_recent_events_found",
+                        "positive_catalysts": [],
+                        "negative_risks": [],
+                        "uncertainties": ["event_context_failed"],
+                        "event_bias": "no_recent_events_found",
+                        "important_events": [],
+                    },
+                    "warnings": [f"event_context_failed:{type(e).__name__}"],
+                    "source_chain": [{"provider": "event_context", "result": "failed"}],
+                }
+
             if use_agent:
                 logger.info(f"{stock_name}({code}) 启用 Agent 模式进行分析")
                 self._emit_progress(58, f"{stock_name}：正在切换 Agent 分析链路")
@@ -561,6 +604,7 @@ class StockAnalysisPipeline:
                     daily_market_context=daily_market_context,
                     portfolio_context=portfolio_context,
                     factor_context=factor_context,
+                    event_context=event_context,
                 )
 
             # Step 4: 多维度情报搜索（最新消息+风险排查+业绩预期）
@@ -661,6 +705,8 @@ class StockAnalysisPipeline:
             )
             if isinstance(factor_context, dict):
                 enhanced_context["factor_summary"] = factor_context
+            if isinstance(event_context, dict):
+                enhanced_context["event_context"] = event_context
             enhanced_context["market_phase_context"] = market_phase_context_dict
             self._attach_daily_market_context(
                 enhanced_context,
@@ -691,6 +737,7 @@ class StockAnalysisPipeline:
                     news_result_count=news_result_count,
                     query_id=query_id,
                     portfolio_context=portfolio_context,
+                    event_context=event_context,
                 ),
                 report_language=report_language,
                 code=code,
@@ -1229,6 +1276,7 @@ class StockAnalysisPipeline:
         daily_market_context: Optional[DailyMarketContext] = None,
         portfolio_context: Optional[Dict[str, Any]] = None,
         factor_context: Optional[Dict[str, Any]] = None,
+        event_context: Optional[Dict[str, Any]] = None,
     ) -> Optional[AnalysisResult]:
         """
         使用 Agent 模式分析单只股票。
@@ -1273,6 +1321,8 @@ class StockAnalysisPipeline:
                 initial_context["trend_result"] = self._safe_to_dict(trend_result)
             if isinstance(factor_context, dict):
                 initial_context["factor_summary"] = dict(factor_context)
+            if isinstance(event_context, dict):
+                initial_context["event_context"] = dict(event_context)
 
             # Agent path: inject social sentiment as news_context so both
             # executor (_build_user_message) and orchestrator (ctx.set_data)
@@ -1323,6 +1373,7 @@ class StockAnalysisPipeline:
                     query_id=query_id,
                     base_context=analysis_context,
                     portfolio_context=portfolio_context,
+                    event_context=event_context,
                 ),
                 report_language=report_language,
                 code=code,
@@ -2561,6 +2612,7 @@ class StockAnalysisPipeline:
         query_id: str,
         portfolio_context: Optional[Dict[str, Any]] = None,
         factor_context: Optional[Dict[str, Any]] = None,
+        event_context: Optional[Dict[str, Any]] = None,
     ) -> PipelineAnalysisArtifacts:
         return PipelineAnalysisArtifacts(
             code=code,
@@ -2581,6 +2633,7 @@ class StockAnalysisPipeline:
                 "trigger_source": self.query_source,
             },
             portfolio_context=dict(portfolio_context) if isinstance(portfolio_context, dict) else None,
+            event_context=dict(event_context) if isinstance(event_context, dict) else None,
         )
 
     def _build_agent_analysis_artifacts(
@@ -2595,6 +2648,7 @@ class StockAnalysisPipeline:
         query_id: str,
         base_context: Optional[Dict[str, Any]] = None,
         portfolio_context: Optional[Dict[str, Any]] = None,
+        event_context: Optional[Dict[str, Any]] = None,
     ) -> PipelineAnalysisArtifacts:
         context_candidate = base_context
         if not isinstance(context_candidate, dict):
@@ -2636,6 +2690,15 @@ class StockAnalysisPipeline:
                 "trigger_source": self.query_source,
             },
             portfolio_context=dict(portfolio_context) if isinstance(portfolio_context, dict) else None,
+            event_context=(
+                dict(event_context)
+                if isinstance(event_context, dict)
+                else (
+                    dict(initial_context.get("event_context"))
+                    if isinstance(initial_context.get("event_context"), dict)
+                    else None
+                )
+            ),
         )
 
     def _build_analysis_context_pack_outputs(
