@@ -3614,21 +3614,32 @@ class GeminiAnalyzer:
             factor_volatility = factor_summary.get("volatility") if isinstance(factor_summary.get("volatility"), dict) else {}
             factor_volume = factor_summary.get("volume") if isinstance(factor_summary.get("volume"), dict) else {}
             factor_short = factor_summary.get("short_term") if isinstance(factor_summary.get("short_term"), dict) else {}
+            factor_risk = factor_summary.get("risk") if isinstance(factor_summary.get("risk"), dict) else {}
+            factor_warmup = factor_summary.get("warmup") if isinstance(factor_summary.get("warmup"), dict) else {}
+            risk_flags = factor_risk.get("flags") if isinstance(factor_risk.get("flags"), dict) else {}
+            active_risk_flags = factor_risk.get("active") if isinstance(factor_risk.get("active"), list) else []
+            active_risk_flags_text = ", ".join(str(flag) for flag in active_risk_flags) or "N/A"
             prompt += f"""
 ### 结构化因子摘要（LLM 辅助输入）
 | 因子 | 数值 | 用法 |
 |------|------|------|
 | 数据日期 | {factor_summary.get('as_of', 'N/A')} | 来源：{factor_summary.get('source', 'N/A')} |
 | 样本条数 | {factor_summary.get('bar_count', 'N/A')} | 少于20条时仅作弱参考 |
+| Warm-up | full={factor_warmup.get('is_full_warmup', 'N/A')} / min={factor_warmup.get('minimum_available_bars', 'N/A')} / full_window={factor_warmup.get('full_warmup_bars', 'N/A')} | warm-up 不满时，长周期因子降权 |
 | 1日/5日/20日收益 | {factor_returns.get('return_1d_pct', 'N/A')}% / {factor_returns.get('return_5d_pct', 'N/A')}% / {factor_returns.get('return_20d_pct', 'N/A')}% | 短中期价格动量 |
 | 均线排列 | {factor_trend.get('ma_alignment', 'N/A')} | bullish/bearish/mixed |
 | MA5/MA20偏离 | {factor_trend.get('ma5_distance_pct', 'N/A')}% / {factor_trend.get('ma20_distance_pct', 'N/A')}% | 判断追高或回踩 |
 | MACD状态 | {factor_momentum.get('macd_state', 'N/A')} | 趋势加速/转弱参考 |
 | RSI6/RSI12 | {factor_momentum.get('rsi_6', 'N/A')} / {factor_momentum.get('rsi_12', 'N/A')} | 超买超卖参考 |
+| KDJ K/D/J | {factor_momentum.get('kdj_k', 'N/A')} / {factor_momentum.get('kdj_d', 'N/A')} / {factor_momentum.get('kdj_j', 'N/A')} | 短线摆动与超买超卖 |
+| ADX/CCI/ROC10 | {factor_momentum.get('adx_14', 'N/A')} / {factor_momentum.get('cci_14', 'N/A')} / {factor_momentum.get('roc_10_pct', 'N/A')}% | 趋势强度、偏离和动量 |
+| WillR/StochK/StochD | {factor_momentum.get('willr_14', 'N/A')} / {factor_momentum.get('stoch_k', 'N/A')} / {factor_momentum.get('stoch_d', 'N/A')} | 短线指标交叉验证 |
 | ATR14/布林%B | {factor_volatility.get('atr_14_pct', 'N/A')}% / {factor_volatility.get('boll_percent_b', 'N/A')} | 波动与通道位置 |
-| 20日量比/量能分位 | {factor_volume.get('volume_ratio_20d', 'N/A')} / {factor_volume.get('volume_pct_rank_20d', 'N/A')} | 量价确认 |
+| OBV ZScore | {factor_volatility.get('obv_z_20d', 'N/A')} | OBV 变化的20日标准化强度 |
+| 5/20日量比/量能分位 | {factor_volume.get('volume_ratio_5d', 'N/A')} / {factor_volume.get('volume_ratio_20d', 'N/A')} / {factor_volume.get('volume_pct_rank_20d', 'N/A')} | 量价确认 |
 | 20日区间位置 | {factor_short.get('range_position_20d', 'N/A')} | 0接近低位，1接近高位 |
 | 涨停/跌停距离 | {factor_short.get('distance_to_limit_up_pct', 'N/A')}% / {factor_short.get('distance_to_limit_down_pct', 'N/A')}% | A股短线风险边界 |
+| 短线风险标记 | active={active_risk_flags_text} | high_volume={risk_flags.get('high_volume', 'N/A')}, high_volume_stall={risk_flags.get('high_volume_stall', 'N/A')}, breakdown_below_ma20={risk_flags.get('breakdown_below_ma20', 'N/A')}, short_term_overheated={risk_flags.get('short_term_overheated', 'N/A')} |
 
 > 因子摘要来自已获取行情的派生计算，只能辅助校准价格、动量、波动和量能判断；不得替代新闻、基本面、资金流或风险事件证据。
 """

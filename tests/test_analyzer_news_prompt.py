@@ -230,13 +230,36 @@ class AnalyzerNewsPromptTestCase(unittest.TestCase):
                 "bar_count": 60,
                 "returns": {"return_1d_pct": 1.2, "return_5d_pct": 3.4, "return_20d_pct": 8.9},
                 "trend": {"ma_alignment": "bullish", "ma5_distance_pct": 1.6, "ma20_distance_pct": 4.4},
-                "momentum": {"macd_state": "bullish", "rsi_6": 66.0, "rsi_12": 61.5},
-                "volatility": {"atr_14_pct": 2.1, "boll_percent_b": 0.82},
-                "volume": {"volume_ratio_20d": 1.35, "volume_pct_rank_20d": 0.9},
+                "momentum": {
+                    "macd_state": "bullish",
+                    "rsi_6": 66.0,
+                    "rsi_12": 61.5,
+                    "kdj_k": 72.1,
+                    "kdj_d": 68.2,
+                    "kdj_j": 79.9,
+                    "adx_14": 31.2,
+                    "cci_14": 116.4,
+                    "roc_10_pct": 5.6,
+                    "willr_14": -18.4,
+                    "stoch_k": 81.1,
+                    "stoch_d": 75.2,
+                },
+                "volatility": {"atr_14_pct": 2.1, "boll_percent_b": 0.82, "obv_z_20d": 1.4},
+                "volume": {"volume_ratio_5d": 1.1, "volume_ratio_20d": 1.35, "volume_pct_rank_20d": 0.9},
                 "short_term": {
                     "range_position_20d": 0.78,
                     "distance_to_limit_up_pct": 7.6,
                     "distance_to_limit_down_pct": 12.4,
+                },
+                "risk": {
+                    "flags": {"high_volume": True, "high_volume_stall": True, "short_term_overheated": False},
+                    "active": ["high_volume", "high_volume_stall"],
+                },
+                "warmup": {
+                    "bar_count": 60,
+                    "minimum_available_bars": 20,
+                    "full_warmup_bars": 60,
+                    "is_full_warmup": True,
                 },
             },
         }
@@ -246,6 +269,11 @@ class AnalyzerNewsPromptTestCase(unittest.TestCase):
         self.assertIn("结构化因子摘要（LLM 辅助输入）", prompt)
         self.assertIn("storage.get_data_range", prompt)
         self.assertIn("bullish", prompt)
+        self.assertIn("KDJ K/D/J", prompt)
+        self.assertIn("ADX/CCI/ROC10", prompt)
+        self.assertIn("WillR/StochK/StochD", prompt)
+        self.assertIn("OBV ZScore", prompt)
+        self.assertIn("high_volume_stall=True", prompt)
         self.assertIn("涨停/跌停距离", prompt)
 
     def test_prompt_includes_structured_event_context_and_guardrails(self) -> None:

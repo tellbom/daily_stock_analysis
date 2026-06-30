@@ -9,6 +9,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+- [改进] 普通 LLM 分析的结构化因子摘要内化 stock-analysis 短线量化口径，补齐 KDJ、ADX、CCI、ROC、WillR、Stoch、OBV、warm-up 状态和高位放量/放量滞涨/破位/过热等风险标记。
+
 <!-- 新条目格式：- [类型] 描述（类型取值：新功能/改进/修复/文档/测试/chore）-->
 <!-- 每条独立一行追加到本段末尾，无需分类标题，合并时冲突最小 -->
 - [改进] 新增本地 Python Web 服务启动脚本，便于按 `.env` 复现部署。
