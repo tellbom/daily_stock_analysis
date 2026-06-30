@@ -70,7 +70,7 @@ kill <PID>
 
 ## LLM 因子输入
 
-普通分析会基于已写入本项目数据库的日线数据生成 `factor_summary`，并在 Prompt 中以结构化表格注入给 LLM。当前覆盖：
+普通分析会基于已写入本项目数据库的日线数据生成 `factor_summary`，并在 Prompt 中以结构化表格注入给 LLM。日线预取窗口为 120 个交易日，`factor_summary` 从数据库读取 180 个自然日窗口，尽量覆盖约 120 个交易日用于 MA60、ADX、OBV、BOLL、ATR 和量能分位等短线指标 warm-up。当前覆盖：
 
 - 均线偏离与均线排列
 - MACD、RSI、布林、ATR

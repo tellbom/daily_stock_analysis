@@ -10,6 +10,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 ## [Unreleased]
 
 - [改进] 普通 LLM 分析的结构化因子摘要内化 stock-analysis 短线量化口径，补齐 KDJ、ADX、CCI、ROC、WillR、Stoch、OBV、warm-up 状态和高位放量/放量滞涨/破位/过热等风险标记。
+- [改进] 普通分析日线预取窗口调整为 120 个交易日，结构化因子摘要读取 180 个自然日历史窗口，以支撑 T+5 短线指标 warm-up。
 
 <!-- 新条目格式：- [类型] 描述（类型取值：新功能/改进/修复/文档/测试/chore）-->
 <!-- 每条独立一行追加到本段末尾，无需分类标题，合并时冲突最小 -->

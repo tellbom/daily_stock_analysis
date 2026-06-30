@@ -17,7 +17,7 @@ sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")
 
 from data_provider.base import DataFetcherManager
 from data_provider.pytdx_fetcher import PytdxFetcher
-from src.core.pipeline import StockAnalysisPipeline
+from src.core.pipeline import DAILY_PREFETCH_LOOKBACK_DAYS, StockAnalysisPipeline
 
 
 class _DummyFetcher:
@@ -189,6 +189,10 @@ class TestPrefetchStockNames(unittest.TestCase):
         self.assertTrue(success)
         self.assertIsNone(error)
         pipeline.fetcher_manager.get_stock_name.assert_called_once_with("600519", allow_realtime=False)
+        pipeline.fetcher_manager.get_daily_data.assert_called_once_with(
+            "600519",
+            days=DAILY_PREFETCH_LOOKBACK_DAYS,
+        )
 
     def test_pytdx_get_stock_name_reads_all_security_list_pages(self):
         fetcher = PytdxFetcher(hosts=[])

@@ -17,8 +17,13 @@ training, backtest or Parquet-lake workflow.
   `ak.stock_zh_a_hist(..., adjust="qfq")` fallback.
 - Bars are normalised to DSA standard columns: `date`, `open`, `high`, `low`,
   `close`, `volume`, `amount`, `turnover_rate`, `pct_chg`.
+- Normal analysis prefetches 120 trading-day daily bars so T+5 context has
+  enough warm-up for MA60, ADX, OBV, BOLL, ATR and volume percentile signals.
 - `factor_summary` only uses bars already fetched or stored by the DSA pipeline;
   it does not trigger a separate external project data run.
+- `factor_summary` reads stored daily bars across a 180-natural-day window,
+  which is intended to cover roughly 120 trading days when the local database
+  has enough history.
 
 ## Factor Families
 

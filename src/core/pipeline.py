@@ -91,6 +91,9 @@ from bot.models import BotMessage
 
 logger = logging.getLogger(__name__)
 
+DAILY_PREFETCH_LOOKBACK_DAYS = 120
+FACTOR_CONTEXT_LOOKBACK_NATURAL_DAYS = 180
+
 # 防御性 guard：当实例绕过 __init__（如测试中 __new__）构造时，
 # double-check 初始化 _single_stock_notify_lock 仍然线程安全。
 _SINGLE_STOCK_NOTIFY_LOCK_INIT_GUARD = threading.Lock()
@@ -341,7 +344,10 @@ class StockAnalysisPipeline:
 
             # 从数据源获取数据
             logger.info(f"{stock_name}({code}) 开始从数据源获取数据...")
-            df, source_name = self.fetcher_manager.get_daily_data(code, days=30)
+            df, source_name = self.fetcher_manager.get_daily_data(
+                code,
+                days=DAILY_PREFETCH_LOOKBACK_DAYS,
+            )
 
             if df is None or df.empty:
                 return False, "获取数据为空"
@@ -516,7 +522,9 @@ class StockAnalysisPipeline:
                 _mkt = get_market_for_stock(normalize_stock_code(code))
                 frozen = get_frozen_target_date()
                 end_date = frozen if frozen else get_market_now(_mkt).date()
-                start_date = end_date - timedelta(days=89)  # ~60 trading days for MA60
+                start_date = end_date - timedelta(
+                    days=FACTOR_CONTEXT_LOOKBACK_NATURAL_DAYS - 1
+                )  # ~120 trading days for short-term factor warm-up
                 historical_bars = self.db.get_data_range(code, start_date, end_date)
                 if historical_bars:
                     df = pd.DataFrame([bar.to_dict() for bar in historical_bars])
@@ -1617,7 +1625,10 @@ class StockAnalysisPipeline:
             return context
 
         try:
-            df, source_name = self.fetcher_manager.get_daily_data(code, days=60)
+            df, source_name = self.fetcher_manager.get_daily_data(
+                code,
+                days=DAILY_PREFETCH_LOOKBACK_DAYS,
+            )
         except Exception as exc:
             logger.warning("[%s] JP/KR daily fallback fetch failed: %s", code, exc)
             return context
@@ -2836,6 +2847,7 @@ class StockAnalysisPipeline:
         report_type: ReportType = ReportType.SIMPLE,
         analysis_query_id: Optional[str] = None,
         current_time: Optional[datetime] = None,
+        force_refresh: bool = False,
     ) -> Optional[AnalysisResult]:
         """
         处理单只股票的完整流程
@@ -2878,7 +2890,9 @@ class StockAnalysisPipeline:
             self._emit_progress(12, f"{code}：正在准备分析任务")
             # Step 1: 获取并保存数据
             success, error = self.fetch_and_save_stock_data(
-                code, current_time=current_time
+                code,
+                current_time=current_time,
+                force_refresh=force_refresh,
             )
             
             if not success:
@@ -2973,7 +2987,10 @@ class StockAnalysisPipeline:
         # === 批量预取实时行情（优化：避免每只股票都触发全量拉取）===
         # 只有股票数量 >= 5 时才进行预取，少量股票直接逐个查询更高效
         if len(stock_codes) >= 5:
-            daily_prefetch_count = self.fetcher_manager.prefetch_daily_klines(stock_codes, days=30)
+            daily_prefetch_count = self.fetcher_manager.prefetch_daily_klines(
+                stock_codes,
+                days=DAILY_PREFETCH_LOOKBACK_DAYS,
+            )
             if daily_prefetch_count > 0:
                 logger.info(
                     "[prefetch] component=daily_kline_prefetch action=complete "
