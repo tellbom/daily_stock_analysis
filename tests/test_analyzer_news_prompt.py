@@ -276,6 +276,71 @@ class AnalyzerNewsPromptTestCase(unittest.TestCase):
         self.assertIn("high_volume_stall=True", prompt)
         self.assertIn("涨停/跌停距离", prompt)
 
+    def test_prompt_includes_windowed_quant_factor_context(self) -> None:
+        with patch.object(GeminiAnalyzer, "_init_litellm", return_value=None):
+            analyzer = GeminiAnalyzer()
+
+        context = {
+            "code": "600519",
+            "stock_name": "贵州茅台",
+            "date": "2026-05-24",
+            "today": {"close": 1880.0},
+            "quant_factor_context": {
+                "status": "available",
+                "source": "storage.get_data_range",
+                "as_of": "2026-05-24",
+                "window_policy": {
+                    "compute_window_bars": 120,
+                    "primary_horizon": "next_trading_day",
+                },
+                "technical": {
+                    "window_returns_pct": {"1d": 1.2, "3d": 2.1, "5d": 3.4},
+                    "volume_ratios": {"1d": 1.0, "3d": 1.1, "5d": 1.3},
+                    "short_term": {
+                        "range_position_20d": 0.78,
+                        "active_risk_flags": ["high_volume"],
+                    },
+                },
+                "capital_flow": {
+                    "status": "available",
+                    "stock_flow": {
+                        "bias": "inflow",
+                        "main_net_inflow": 1200000,
+                        "inflow_5d": 5000000,
+                        "inflow_10d": 8000000,
+                    },
+                },
+                "valuation": {
+                    "status": "available",
+                    "pe_ratio": 28.5,
+                    "pb_ratio": 6.2,
+                    "total_mv": 2000000000000,
+                },
+                "industry": {"status": "partial", "boards": ["白酒", "消费"]},
+                "fundamentals": {
+                    "status": "partial",
+                    "financial_report": {"report_date": "2026-03-31", "lag_days": 54},
+                },
+                "margin": {"status": "not_supported"},
+                "event_unlock": {
+                    "status": "available",
+                    "nearest_date": "2026-06-05",
+                    "risk_level": "high",
+                },
+                "limitations": ["industry_cross_section_rank_not_computed_in_single_stock_context"],
+            },
+        }
+
+        prompt = analyzer._format_prompt(context, "贵州茅台", news_context=None)
+
+        self.assertIn("窗口式量化因子上下文（明日建议）", prompt)
+        self.assertIn("compute=120 bars", prompt)
+        self.assertIn("1d:1.2%", prompt)
+        self.assertIn("bias=inflow", prompt)
+        self.assertIn("PE=28.5", prompt)
+        self.assertIn("unlock_date=2026-06-05", prompt)
+        self.assertIn("解禁风险以事件管道为准", prompt)
+
     def test_prompt_includes_structured_event_context_and_guardrails(self) -> None:
         with patch.object(GeminiAnalyzer, "_init_litellm", return_value=None):
             analyzer = GeminiAnalyzer()

@@ -73,6 +73,7 @@ class PipelineAnalysisArtifacts:
     metadata: Dict[str, Any]
     portfolio_context: Optional[Dict[str, Any]] = None
     factor_context: Optional[Dict[str, Any]] = None
+    quant_factor_context: Optional[Dict[str, Any]] = None
     event_context: Optional[Dict[str, Any]] = None
 
 
@@ -360,12 +361,20 @@ def _build_chip_block(artifacts: PipelineAnalysisArtifacts) -> AnalysisContextBl
 
 def _build_factors_block(artifacts: PipelineAnalysisArtifacts) -> AnalysisContextBlock:
     context = artifacts.factor_context if isinstance(artifacts.factor_context, dict) else None
+    quant_context = (
+        artifacts.quant_factor_context
+        if isinstance(artifacts.quant_factor_context, dict)
+        else None
+    )
+    enhanced = artifacts.enhanced_context if isinstance(artifacts.enhanced_context, dict) else {}
     if context is None:
-        enhanced = artifacts.enhanced_context if isinstance(artifacts.enhanced_context, dict) else {}
         candidate = enhanced.get("factor_summary")
         context = candidate if isinstance(candidate, dict) else None
+    quant_candidate = enhanced.get("quant_factor_context")
+    if quant_context is None and isinstance(quant_candidate, dict):
+        quant_context = quant_candidate
 
-    if not context:
+    if not context and not quant_context:
         return AnalysisContextBlock(
             status=ContextFieldStatus.MISSING,
             items={
@@ -377,31 +386,70 @@ def _build_factors_block(artifacts: PipelineAnalysisArtifacts) -> AnalysisContex
             metadata={"auxiliary": True, "quality_weighted": False},
         )
 
-    status = _factor_status(context.get("status"))
-    source = _source_text(context.get("source")) or "daily_bars"
-    missing_reason = context.get("missing_reason") if status == ContextFieldStatus.MISSING else None
-    warnings = _list_text(context.get("warnings"))
+    base_context = context if isinstance(context, dict) else {}
+    status = _factor_status(base_context.get("status"))
+    if not base_context and isinstance(quant_context, dict):
+        status = _factor_status(quant_context.get("status"))
+    quant_status = _factor_status(quant_context.get("status")) if isinstance(quant_context, dict) else None
+    if quant_status == ContextFieldStatus.AVAILABLE:
+        status = ContextFieldStatus.AVAILABLE
+    elif status == ContextFieldStatus.MISSING and quant_status is not None:
+        status = quant_status
+    source = _source_text(base_context.get("source")) or (
+        _source_text(quant_context.get("source")) if isinstance(quant_context, dict) else None
+    ) or "daily_bars"
+    base_missing_reason = base_context.get("missing_reason")
+    warnings = _list_text(base_context.get("warnings"))
+    if isinstance(quant_context, dict):
+        warnings.extend(
+            warning
+            for warning in _list_text(quant_context.get("warnings"))
+            if warning not in warnings
+        )
+    quant_technical = (
+        quant_context.get("technical")
+        if isinstance(quant_context, dict) and isinstance(quant_context.get("technical"), dict)
+        else {}
+    )
     metadata = {
         key: value
         for key, value in {
-            "as_of": context.get("as_of"),
-            "bar_count": context.get("bar_count"),
+            "as_of": base_context.get("as_of") or (quant_context or {}).get("as_of"),
+            "bar_count": base_context.get("bar_count") or quant_technical.get("bar_count"),
             "auxiliary": True,
             "quality_weighted": False,
         }.items()
         if value not in (None, "", [], {})
     }
+    items = {}
+    if base_context:
+        items["factor_summary"] = AnalysisContextItem(
+            status=_factor_status(base_context.get("status")),
+            value=base_context,
+            source=_source_text(base_context.get("source")) or source,
+            missing_reason=str(base_missing_reason) if base_missing_reason else None,
+            warnings=_list_text(base_context.get("warnings")),
+        )
+    else:
+        items["factor_summary"] = AnalysisContextItem(
+            status=ContextFieldStatus.MISSING,
+            missing_reason="factor_context_missing",
+        )
+    if isinstance(quant_context, dict):
+        items["quant_factor_context"] = AnalysisContextItem(
+            status=_factor_status(quant_context.get("status")),
+            value=quant_context,
+            source=_source_text(quant_context.get("source")) or source,
+            missing_reason=(
+                str(quant_context.get("missing_reason"))
+                if quant_context.get("missing_reason")
+                else None
+            ),
+            warnings=_list_text(quant_context.get("warnings")),
+        )
     return AnalysisContextBlock(
         status=status,
-        items={
-            "factor_summary": AnalysisContextItem(
-                status=status,
-                value=context,
-                source=source,
-                missing_reason=str(missing_reason) if missing_reason else None,
-                warnings=warnings,
-            )
-        },
+        items=items,
         source=source,
         warnings=warnings,
         metadata=metadata,

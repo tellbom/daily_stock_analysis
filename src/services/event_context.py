@@ -22,8 +22,9 @@ from data_provider.base import normalize_stock_code
 
 logger = logging.getLogger(__name__)
 
-EVENT_TYPES = {"news", "announcement", "research", "industry_event"}
+EVENT_TYPES = {"news", "announcement", "research", "industry_event", "risk_event"}
 _EVENT_PRIORITY = {
+    "risk_event": 0,
     "announcement": 0,
     "research": 1,
     "industry_event": 2,
@@ -108,7 +109,7 @@ class AkshareEventFetcher:
             }
 
         endpoint_calls: Sequence[Tuple[str, Any, Dict[str, Any]]] = (
-            ("announcement", getattr(ak, "stock_notice_report", None), {}),
+            ("announcement", getattr(ak, "stock_individual_notice_report", None), {}),
             ("news", getattr(ak, "stock_news_em", None), {"symbol": code}),
             ("research", getattr(ak, "stock_research_report_em", None), {"symbol": code}),
         )
@@ -177,7 +178,44 @@ class AkshareEventFetcher:
                     }
                 )
 
+        unlock_func = getattr(ak, "stock_restricted_release_detail_em", None)
+        if callable(unlock_func):
+            try:
+                endpoint_items = self._fetch_unlock_events(
+                    unlock_func,
+                    stock_code=code,
+                    stock_name=stock_name,
+                    target_date=target_date,
+                )
+                items.extend(endpoint_items)
+                source_chain.append(
+                    {
+                        "provider": "akshare.stock_restricted_release_detail_em",
+                        "result": "ok",
+                        "count": len(endpoint_items),
+                    }
+                )
+            except Exception as exc:
+                logger.debug("unlock event fetch failed for %s: %s", code, exc, exc_info=True)
+                warnings.append(f"unlock_event_fetch_failed:{type(exc).__name__}")
+                source_chain.append(
+                    {
+                        "provider": "akshare.stock_restricted_release_detail_em",
+                        "result": "failed",
+                        "reason": type(exc).__name__,
+                    }
+                )
+        else:
+            warnings.append("unlock_event_endpoint_missing")
+            source_chain.append(
+                {
+                    "provider": "akshare.stock_restricted_release_detail_em",
+                    "result": "missing",
+                }
+            )
+
         items.extend(_industry_events_from_fundamentals(fundamental_context, target_date=target_date))
+        items.sort(key=lambda item: 0 if item.get("type") == "risk_event" else 1)
         return {
             "items": items[: max(1, int(max_items))],
             "warnings": warnings,
@@ -194,17 +232,84 @@ class AkshareEventFetcher:
     ) -> List[Dict[str, Any]]:
         items: List[Dict[str, Any]] = []
         days = max(1, min(int(lookback_days or 1), 7))
-        for offset in range(days):
-            query_date = target_date - timedelta(days=offset)
-            df = func(symbol="全部", date=query_date.strftime("%Y%m%d"))
-            items.extend(
-                _normalise_dataframe_events(
-                    _filter_by_stock(df, stock_code, stock_name),
-                    event_type="announcement",
-                    stock_code=stock_code,
-                    stock_name=stock_name,
-                    source="akshare.stock_notice_report",
-                )
+        begin_date = (target_date - timedelta(days=days - 1)).strftime("%Y-%m-%d")
+        end_date = target_date.strftime("%Y-%m-%d")
+        df = func(
+            security=stock_code,
+            symbol="全部",
+            begin_date=begin_date,
+            end_date=end_date,
+        )
+        items.extend(
+            _normalise_dataframe_events(
+                _filter_by_stock(df, stock_code, stock_name),
+                event_type="announcement",
+                stock_code=stock_code,
+                stock_name=stock_name,
+                source="akshare.stock_individual_notice_report",
+            )
+        )
+        return items
+
+    def _fetch_unlock_events(
+        self,
+        func: Any,
+        *,
+        stock_code: str,
+        stock_name: str,
+        target_date: date,
+        lookahead_days: int = 180,
+    ) -> List[Dict[str, Any]]:
+        start_date = target_date.strftime("%Y%m%d")
+        end_date = (target_date + timedelta(days=max(1, int(lookahead_days)))).strftime("%Y%m%d")
+        df = func(start_date=start_date, end_date=end_date)
+        filtered = _filter_by_stock(df, stock_code, stock_name)
+        if filtered is None or not hasattr(filtered, "empty") or filtered.empty:
+            return []
+
+        items: List[Dict[str, Any]] = []
+        for record in filtered.to_dict(orient="records"):
+            if not isinstance(record, dict):
+                continue
+            unlock_date = _pick_value(record, "解禁时间", "解禁日期", "date")
+            parsed_unlock_date = _coerce_date(unlock_date)
+            if parsed_unlock_date is None:
+                continue
+            days_to_unlock = (parsed_unlock_date - target_date).days
+            if days_to_unlock < 0:
+                continue
+            unlock_type = _pick_text(record, "限售股类型", "类型") or "限售股解禁"
+            actual_qty = _safe_float(_pick_value(record, "实际解禁数量", "解禁数量"))
+            market_value = _safe_float(_pick_value(record, "实际解禁市值", "解禁市值"))
+            ratio_raw = _safe_float(_pick_value(record, "占解禁前流通市值比例", "占流通市值比例", "占总股本比例"))
+            ratio_pct = _normalise_ratio_pct(ratio_raw)
+            risk_level = _unlock_risk_level(ratio_pct, market_value, days_to_unlock)
+            display_name = stock_name or _pick_text(record, "股票简称", "名称") or stock_code
+            title = f"{display_name}未来{days_to_unlock}天存在限售股解禁"
+            summary_parts = [
+                f"解禁日期={parsed_unlock_date.isoformat()}",
+                f"限售股类型={unlock_type}",
+                f"实际解禁数量={_compact_number(actual_qty)}",
+                f"实际解禁市值={_compact_number(market_value)}",
+                f"占解禁前流通市值比例={_compact_number(ratio_pct)}%",
+                f"风险级别={risk_level}",
+            ]
+            items.append(
+                {
+                    "type": "risk_event",
+                    "title": title,
+                    "publish_time": parsed_unlock_date.isoformat(),
+                    "source": "akshare.stock_restricted_release_detail_em",
+                    "source_id": _event_source_id(
+                        "akshare.stock_restricted_release_detail_em",
+                        record,
+                        title,
+                    ),
+                    "summary": "；".join(part for part in summary_parts if "None" not in part),
+                    "tags": ["risk_event", "unlock", "risk"],
+                    "risk_level": risk_level,
+                    "is_confirmed": True,
+                }
             )
         return items
 
@@ -448,10 +553,11 @@ def _standardise_events(
             warnings.append("event_missing_publish_time")
             continue
         compare_dt = publish_dt.replace(tzinfo=None) if publish_dt.tzinfo else publish_dt
-        if compare_dt > end_dt:
+        is_forward_risk_event = event_type == "risk_event"
+        if compare_dt > end_dt and not is_forward_risk_event:
             warnings.append("event_future_filtered")
             continue
-        if event_type != "announcement" and compare_dt < start_dt:
+        if event_type not in {"announcement", "risk_event"} and compare_dt < start_dt:
             warnings.append("event_out_of_window_filtered")
             continue
 
@@ -684,6 +790,56 @@ def _safe_text(value: Any) -> str:
     except Exception:
         pass
     return str(value).strip()
+
+
+def _safe_float(value: Any) -> Optional[float]:
+    if value is None:
+        return None
+    try:
+        if pd.isna(value):
+            return None
+    except Exception:
+        pass
+    text = str(value).strip().replace(",", "").replace("%", "")
+    if text in {"", "-", "None", "nan"}:
+        return None
+    try:
+        return float(text)
+    except (TypeError, ValueError):
+        return None
+
+
+def _compact_number(value: Optional[float], digits: int = 4) -> Optional[float]:
+    if value is None:
+        return None
+    return round(float(value), digits)
+
+
+def _normalise_ratio_pct(value: Optional[float]) -> Optional[float]:
+    if value is None:
+        return None
+    if abs(value) <= 1:
+        return value * 100
+    return value
+
+
+def _unlock_risk_level(
+    ratio_pct: Optional[float],
+    market_value: Optional[float],
+    days_to_unlock: int,
+) -> str:
+    if (
+        (ratio_pct is not None and ratio_pct >= 5)
+        or (market_value is not None and market_value >= 1_000_000_000)
+    ):
+        return "high"
+    if (
+        (ratio_pct is not None and ratio_pct >= 1)
+        or (market_value is not None and market_value >= 200_000_000)
+        or days_to_unlock <= 14
+    ):
+        return "medium"
+    return "low"
 
 
 def _list_text(value: Any) -> List[str]:

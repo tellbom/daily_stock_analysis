@@ -480,6 +480,39 @@ def test_factor_block_is_auxiliary_and_uses_migrated_summary() -> None:
     assert "factors" not in pack.data_quality.block_scores
 
 
+def test_factor_block_exposes_quant_factor_context_from_enhanced_context() -> None:
+    pack = AnalysisContextBuilder.build(
+        _artifacts(
+            factor_context={
+                "status": "partial",
+                "source": "storage.get_data_range",
+                "as_of": "2026-05-24",
+                "bar_count": 60,
+            },
+            enhanced_context={
+                "today": {"date": "2026-05-24", "close": 1880.0},
+                "quant_factor_context": {
+                    "status": "available",
+                    "source": "storage.get_data_range",
+                    "as_of": "2026-05-24",
+                    "technical": {"bar_count": 60},
+                    "capital_flow": {
+                        "status": "available",
+                        "stock_flow": {"bias": "inflow"},
+                    },
+                    "warnings": ["margin:margin_source_not_integrated"],
+                },
+            },
+        )
+    )
+
+    block = pack.blocks["factors"]
+    assert block.status == ContextFieldStatus.AVAILABLE
+    assert block.items["factor_summary"].status == ContextFieldStatus.PARTIAL
+    assert block.items["quant_factor_context"].value["capital_flow"]["stock_flow"]["bias"] == "inflow"
+    assert "margin:margin_source_not_integrated" in block.warnings
+
+
 def test_event_block_is_auxiliary_and_exposes_structured_digest() -> None:
     pack = AnalysisContextBuilder.build(
         _artifacts(

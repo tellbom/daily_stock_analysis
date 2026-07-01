@@ -61,7 +61,7 @@ from src.services.analysis_context_builder import (
     AnalysisContextBuilder,
     PipelineAnalysisArtifacts,
 )
-from src.factors import build_llm_factor_summary
+from src.factors import build_llm_factor_summary, build_quant_factor_context
 from src.services.event_context import build_event_context
 from src.services.run_diagnostics import (
     activate_run_diagnostic_context,
@@ -517,6 +517,8 @@ class StockAnalysisPipeline:
             # Step 3: 趋势分析（基于交易理念）— 在 Agent 分支之前执行，供两条路径共用
             trend_result: Optional[TrendAnalysisResult] = None
             factor_context: Optional[Dict[str, Any]] = None
+            quant_factor_context: Optional[Dict[str, Any]] = None
+            factor_bars_df: Optional[pd.DataFrame] = None
             try:
                 from src.services.history_loader import get_frozen_target_date
                 _mkt = get_market_for_stock(normalize_stock_code(code))
@@ -528,6 +530,7 @@ class StockAnalysisPipeline:
                 historical_bars = self.db.get_data_range(code, start_date, end_date)
                 if historical_bars:
                     df = pd.DataFrame([bar.to_dict() for bar in historical_bars])
+                    factor_bars_df = df
                     try:
                         factor_context = build_llm_factor_summary(
                             df,
@@ -595,6 +598,34 @@ class StockAnalysisPipeline:
                     "source_chain": [{"provider": "event_context", "result": "failed"}],
                 }
 
+            try:
+                quant_factor_context = build_quant_factor_context(
+                    factor_bars_df,
+                    code=code,
+                    source="storage.get_data_range",
+                    factor_summary=factor_context,
+                    fundamental_context=fundamental_context,
+                    realtime_quote=(
+                        realtime_quote
+                        if self.config.enable_realtime_quote and realtime_quote
+                        else None
+                    ),
+                    event_context=event_context,
+                )
+                logger.info(
+                    "%s(%s) 窗口式量化因子上下文构建完成: status=%s",
+                    stock_name,
+                    code,
+                    quant_factor_context.get("status"),
+                )
+            except Exception as e:
+                logger.warning(f"{stock_name}({code}) 窗口式量化因子上下文构建失败，已降级跳过: {e}")
+                quant_factor_context = {
+                    "status": "failed",
+                    "source": "storage.get_data_range",
+                    "missing_reason": f"quant_factor_context_failed:{type(e).__name__}",
+                }
+
             if use_agent:
                 logger.info(f"{stock_name}({code}) 启用 Agent 模式进行分析")
                 self._emit_progress(58, f"{stock_name}：正在切换 Agent 分析链路")
@@ -612,6 +643,7 @@ class StockAnalysisPipeline:
                     daily_market_context=daily_market_context,
                     portfolio_context=portfolio_context,
                     factor_context=factor_context,
+                    quant_factor_context=quant_factor_context,
                     event_context=event_context,
                 )
 
@@ -713,6 +745,8 @@ class StockAnalysisPipeline:
             )
             if isinstance(factor_context, dict):
                 enhanced_context["factor_summary"] = factor_context
+            if isinstance(quant_factor_context, dict):
+                enhanced_context["quant_factor_context"] = quant_factor_context
             if isinstance(event_context, dict):
                 enhanced_context["event_context"] = event_context
             enhanced_context["market_phase_context"] = market_phase_context_dict
@@ -739,6 +773,7 @@ class StockAnalysisPipeline:
                     realtime_quote=realtime_quote,
                     trend_result=trend_result,
                     factor_context=factor_context,
+                    quant_factor_context=quant_factor_context,
                     chip_data=chip_data,
                     fundamental_context=fundamental_context,
                     news_context=news_context,
@@ -1284,6 +1319,7 @@ class StockAnalysisPipeline:
         daily_market_context: Optional[DailyMarketContext] = None,
         portfolio_context: Optional[Dict[str, Any]] = None,
         factor_context: Optional[Dict[str, Any]] = None,
+        quant_factor_context: Optional[Dict[str, Any]] = None,
         event_context: Optional[Dict[str, Any]] = None,
     ) -> Optional[AnalysisResult]:
         """
@@ -1329,6 +1365,8 @@ class StockAnalysisPipeline:
                 initial_context["trend_result"] = self._safe_to_dict(trend_result)
             if isinstance(factor_context, dict):
                 initial_context["factor_summary"] = dict(factor_context)
+            if isinstance(quant_factor_context, dict):
+                initial_context["quant_factor_context"] = dict(quant_factor_context)
             if isinstance(event_context, dict):
                 initial_context["event_context"] = dict(event_context)
 
@@ -2623,6 +2661,7 @@ class StockAnalysisPipeline:
         query_id: str,
         portfolio_context: Optional[Dict[str, Any]] = None,
         factor_context: Optional[Dict[str, Any]] = None,
+        quant_factor_context: Optional[Dict[str, Any]] = None,
         event_context: Optional[Dict[str, Any]] = None,
     ) -> PipelineAnalysisArtifacts:
         return PipelineAnalysisArtifacts(
@@ -2635,6 +2674,11 @@ class StockAnalysisPipeline:
             realtime_quote=realtime_quote,
             trend_result=trend_result,
             factor_context=factor_context,
+            quant_factor_context=(
+                dict(quant_factor_context)
+                if isinstance(quant_factor_context, dict)
+                else None
+            ),
             chip_data=chip_data,
             fundamental_context=fundamental_context,
             news_context=news_context,
@@ -2660,6 +2704,7 @@ class StockAnalysisPipeline:
         base_context: Optional[Dict[str, Any]] = None,
         portfolio_context: Optional[Dict[str, Any]] = None,
         event_context: Optional[Dict[str, Any]] = None,
+        quant_factor_context: Optional[Dict[str, Any]] = None,
     ) -> PipelineAnalysisArtifacts:
         context_candidate = base_context
         if not isinstance(context_candidate, dict):
@@ -2691,6 +2736,15 @@ class StockAnalysisPipeline:
                 initial_context.get("factor_summary")
                 if isinstance(initial_context.get("factor_summary"), dict)
                 else None
+            ),
+            quant_factor_context=(
+                dict(quant_factor_context)
+                if isinstance(quant_factor_context, dict)
+                else (
+                    dict(initial_context.get("quant_factor_context"))
+                    if isinstance(initial_context.get("quant_factor_context"), dict)
+                    else None
+                )
             ),
             chip_data=initial_context.get("chip_distribution"),
             fundamental_context=fundamental_context,

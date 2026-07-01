@@ -24,6 +24,13 @@ training, backtest or Parquet-lake workflow.
 - `factor_summary` reads stored daily bars across a 180-natural-day window,
   which is intended to cover roughly 120 trading days when the local database
   has enough history.
+- `quant_factor_context` is built from the same local artifacts and does not
+  import `/Users/fuziqiang/Desktop/stock-analysis`. It combines local bars,
+  `factor_summary`, `fundamental_context`, realtime quote snapshots and event
+  context into a single-stock/small-batch LLM context.
+- Upstream callers do not need to pass a factor date window. The pipeline uses
+  the latest local market date or frozen target date, reads a 180-natural-day
+  range, then trims the factor context to a 120-bar compute window.
 
 ## Factor Families
 
@@ -35,6 +42,26 @@ training, backtest or Parquet-lake workflow.
   amount, turnover and A-share limit-up/limit-down distance.
 - Risk flags: high volume, high-volume stall, MA20 breakdown, short-term
   overheating, close-near-limit-up and large intraday reversal.
+- Windowed LLM context: `quant_factor_context.technical` exposes 1/3/5/10/20
+  day returns and volume ratios. For next-day advice, 1-5 day windows are
+  primary; 10/20 day windows are background only.
+- Capital-flow context: `quant_factor_context.capital_flow` reads the existing
+  `fundamental_context.capital_flow` block when available. It keeps main,
+  5-day and 10-day net inflow plus sector-flow names, then derives a compact
+  `bias` and short-term reversal label. Missing capital-flow data is reported
+  explicitly and is not replaced by OHLC-only signals.
+- Valuation, industry and fundamentals: the context includes valuation snapshot
+  fields, board membership and financial-report freshness when the current DSA
+  fundamental pipeline has them. These are not full-market cross-sectional
+  ranks.
+- Unlock-event risk: upcoming restricted-share release data is fetched through
+  the event pipeline from `stock_restricted_release_detail_em` when the endpoint
+  is readable. It is injected as a future `risk_event`, not as a technical
+  factor. Fetch or parse failures are surfaced to the LLM as unavailable risk
+  verification rather than interrupting the main analysis.
+- Unsupported factor families: margin balance is surfaced as `not_supported`
+  until DSA owns a stable source adapter. The prompt tells the LLM not to use
+  unsupported factors as evidence.
 
 ## Warm-Up And Missing Data
 
@@ -50,3 +77,9 @@ Unavailable values are omitted from nested blocks rather than fabricated. The
 LLM prompt describes the factor table as auxiliary evidence and instructs the
 model not to replace news, fundamentals, capital flow or risk-event evidence
 with factor-only signals.
+
+`quant_factor_context` keeps this same fail-open rule: a missing factor family
+becomes `missing`, `failed` or `not_supported` with a reason, while the rest of
+the context can still be used. This makes scheduled runs and manual API calls
+share one per-stock factor path without needing a training pipeline or
+sibling-project runtime dependency.

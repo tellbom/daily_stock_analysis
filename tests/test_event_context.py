@@ -64,6 +64,45 @@ def test_event_context_filters_future_items_and_keeps_required_fields() -> None:
     assert context["event_digest"]["positive_catalysts"]
 
 
+def test_event_context_keeps_future_unlock_risk_events() -> None:
+    context = build_event_context(
+        "600519",
+        "贵州茅台",
+        as_of_date="2026-05-24",
+        lookback_days=7,
+        fetcher=_FakeFetcher(
+            [
+                {
+                    "type": "risk_event",
+                    "title": "贵州茅台未来12天存在限售股解禁",
+                    "publish_time": "2026-06-05",
+                    "source": "akshare.stock_restricted_release_detail_em",
+                    "summary": "解禁日期=2026-06-05；占解禁前流通市值比例=6.2%",
+                    "tags": ["risk_event", "unlock", "risk"],
+                    "risk_level": "high",
+                    "is_confirmed": True,
+                },
+                {
+                    "type": "news",
+                    "title": "未来新闻仍应过滤",
+                    "publish_time": "2026-06-05",
+                    "source": "媒体",
+                    "summary": "未来新闻",
+                    "is_confirmed": False,
+                },
+            ]
+        ),
+    )
+
+    assert len(context["items"]) == 1
+    assert context["items"][0]["type"] == "risk_event"
+    assert context["items"][0]["publish_time"] == "2026-06-05"
+    assert context["items"][0]["risk_level"] == "high"
+    assert context["event_digest"]["event_bias"] == "negative"
+    assert context["event_digest"]["negative_risks"]
+    assert "event_future_filtered" in context["warnings"]
+
+
 def test_event_context_dedupes_similar_titles_with_announcement_priority() -> None:
     context = build_event_context(
         "600519",

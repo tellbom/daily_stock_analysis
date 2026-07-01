@@ -3644,6 +3644,111 @@ class GeminiAnalyzer:
 > 因子摘要来自已获取行情的派生计算，只能辅助校准价格、动量、波动和量能判断；不得替代新闻、基本面、资金流或风险事件证据。
 """
 
+        quant_context = context.get("quant_factor_context") if isinstance(context, dict) else None
+        if isinstance(quant_context, dict) and quant_context.get("status") in {"available", "partial"}:
+            policy = quant_context.get("window_policy") if isinstance(quant_context.get("window_policy"), dict) else {}
+            quant_technical = (
+                quant_context.get("technical")
+                if isinstance(quant_context.get("technical"), dict)
+                else {}
+            )
+            window_returns = (
+                quant_technical.get("window_returns_pct")
+                if isinstance(quant_technical.get("window_returns_pct"), dict)
+                else {}
+            )
+            volume_ratios = (
+                quant_technical.get("volume_ratios")
+                if isinstance(quant_technical.get("volume_ratios"), dict)
+                else {}
+            )
+            short_term = (
+                quant_technical.get("short_term")
+                if isinstance(quant_technical.get("short_term"), dict)
+                else {}
+            )
+            capital_flow = (
+                quant_context.get("capital_flow")
+                if isinstance(quant_context.get("capital_flow"), dict)
+                else {}
+            )
+            stock_flow = (
+                capital_flow.get("stock_flow")
+                if isinstance(capital_flow.get("stock_flow"), dict)
+                else {}
+            )
+            valuation = (
+                quant_context.get("valuation")
+                if isinstance(quant_context.get("valuation"), dict)
+                else {}
+            )
+            industry = (
+                quant_context.get("industry")
+                if isinstance(quant_context.get("industry"), dict)
+                else {}
+            )
+            fundamentals = (
+                quant_context.get("fundamentals")
+                if isinstance(quant_context.get("fundamentals"), dict)
+                else {}
+            )
+            financial_report = (
+                fundamentals.get("financial_report")
+                if isinstance(fundamentals.get("financial_report"), dict)
+                else {}
+            )
+            margin = (
+                quant_context.get("margin")
+                if isinstance(quant_context.get("margin"), dict)
+                else {}
+            )
+            event_unlock = (
+                quant_context.get("event_unlock")
+                if isinstance(quant_context.get("event_unlock"), dict)
+                else {}
+            )
+            limitations = (
+                quant_context.get("limitations")
+                if isinstance(quant_context.get("limitations"), list)
+                else []
+            )
+            return_text = " / ".join(
+                f"{window}:{window_returns.get(window, 'N/A')}%"
+                for window in ("1d", "3d", "5d", "10d", "20d")
+            )
+            volume_text = " / ".join(
+                f"{window}:{volume_ratios.get(window, 'N/A')}"
+                for window in ("1d", "3d", "5d", "10d", "20d")
+            )
+            if isinstance(industry.get("boards"), list):
+                board_text = "、".join(str(name) for name in industry.get("boards", [])[:6])
+            else:
+                board_text = "N/A"
+            limitations_text = (
+                _prompt_table_cell(
+                    "；".join(str(item) for item in limitations[:5]),
+                    max_len=260,
+                )
+                or "N/A"
+            )
+            prompt += f"""
+### 窗口式量化因子上下文（明日建议）
+| 因子族 | 当前值 | 使用边界 |
+|--------|--------|----------|
+| 窗口策略 | as_of={quant_context.get('as_of', 'N/A')} / compute={policy.get('compute_window_bars', 'N/A')} bars / primary={policy.get('primary_horizon', 'N/A')} | 上游未传日期时按本地最新交易日窗口抽取 |
+| 1/3/5/10/20日收益 | {return_text} | 明日建议优先看 1-5 日，10/20 日只作背景 |
+| 1/3/5/10/20日量比 | {volume_text} | 放量需结合价格位置，不能单独当买点 |
+| 价格位置/风险 | range20={short_term.get('range_position_20d', 'N/A')} / active={short_term.get('active_risk_flags', 'N/A')} | 高位放量、滞涨、破位要降权买入建议 |
+| 资金流 | status={capital_flow.get('status', 'N/A')} / bias={stock_flow.get('bias', 'N/A')} / main={stock_flow.get('main_net_inflow', 'N/A')} / 5d={stock_flow.get('inflow_5d', 'N/A')} / 10d={stock_flow.get('inflow_10d', 'N/A')} | 资金流是价格位置过滤器；缺失时必须说明无法验证主力行为 |
+| 估值/规模 | PE={valuation.get('pe_ratio', 'N/A')} / PB={valuation.get('pb_ratio', 'N/A')} / 总市值={valuation.get('total_mv', 'N/A')} / 流通市值={valuation.get('circ_mv', 'N/A')} | 当前为单股快照，不是全市场分位排名 |
+| 行业/题材 | status={industry.get('status', 'N/A')} / {board_text or 'N/A'} | 当前仅接入板块归属，未计算行业横截面排名 |
+| 财报新鲜度 | report={financial_report.get('report_date', 'N/A')} / lag_days={financial_report.get('lag_days', 'N/A')} | 仅用于基本面背景，短线结论不得虚构增长率 |
+| 融资融券/解禁风险 | margin={margin.get('status', 'N/A')} / unlock={event_unlock.get('status', 'N/A')} / unlock_date={event_unlock.get('nearest_date', 'N/A')} / unlock_risk={event_unlock.get('risk_level', 'N/A')} | 融资融券未接入时不得当作已验证依据；解禁风险以事件管道为准 |
+| 覆盖限制 | {limitations_text} | 缺失因子要在风险或数据限制中说明 |
+
+> 该上下文是窗口式 LLM 辅助输入，不是训练特征；跨行业/全市场分位、融资融券等未接入因子不得补写或臆测。解禁事件若为 failed/missing，只能写“未验证/未发现”，不能推断为没有风险。
+"""
+
         event_context = context.get("event_context") if isinstance(context, dict) else None
         if isinstance(event_context, dict):
             event_digest = (
