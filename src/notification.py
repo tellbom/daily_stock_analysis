@@ -1024,6 +1024,59 @@ class NotificationService(
         return value
 
     @staticmethod
+    def _conditional_decision_block(dashboard: Dict[str, Any]) -> Dict[str, Any]:
+        if not isinstance(dashboard, dict):
+            return {}
+        block = dashboard.get("conditional_decision")
+        return block if isinstance(block, dict) else {}
+
+    @staticmethod
+    def _is_defensive_or_watch_advice(result: AnalysisResult) -> bool:
+        advice = str(getattr(result, "operation_advice", "") or "")
+        decision_type = str(getattr(result, "decision_type", "") or "")
+        action = str(getattr(result, "action", "") or "")
+        return (
+            decision_type == "sell"
+            or action in {"reduce", "sell", "watch", "avoid", "alert"}
+            or any(token in advice for token in ("观望", "减仓", "卖出", "回避", "不建议"))
+            or any(token in advice.lower() for token in ("watch", "reduce", "sell", "avoid"))
+        )
+
+    def _append_wechat_action_points(
+        self,
+        lines: List[str],
+        *,
+        result: AnalysisResult,
+        sniper: Dict[str, Any],
+        labels: Dict[str, str],
+        report_language: str,
+    ) -> None:
+        if not isinstance(sniper, dict) or not sniper:
+            return
+        ideal_buy = self._clean_sniper_value(sniper.get("ideal_buy"))
+        stop_loss = self._clean_sniper_value(sniper.get("stop_loss"))
+        take_profit = self._clean_sniper_value(sniper.get("take_profit"))
+        defensive = self._is_defensive_or_watch_advice(result)
+        if report_language == "en":
+            buy_title = "Potential entry condition" if defensive else "Entry reference"
+            risk_title = "Risk-control reference"
+            target_title = "Rebound/target reference"
+        else:
+            buy_title = "潜在买点条件" if defensive else "买入参考"
+            risk_title = "风控参考"
+            target_title = "反弹/目标参考"
+        action_lines = []
+        if ideal_buy and ideal_buy != "N/A":
+            action_lines.append(f"🎯 **{buy_title}**：{str(ideal_buy)[:80]}")
+        if stop_loss and stop_loss != "N/A":
+            action_lines.append(f"🛑 **{risk_title}**：{str(stop_loss)[:80]}")
+        if take_profit and take_profit != "N/A":
+            action_lines.append(f"🎊 **{target_title}**：{str(take_profit)[:80]}")
+        if action_lines:
+            lines.extend(action_lines)
+            lines.append("")
+
+    @staticmethod
     def _phase_decision_list(value: Any) -> List[str]:
         if not isinstance(value, list):
             return []
@@ -1251,6 +1304,60 @@ class NotificationService(
                         "|---------|---------|",
                         f"| 🆕 **{labels['no_position_label']}** | {pos_advice.get('no_position', localize_operation_advice(result.operation_advice, report_language))} |",
                         f"| 💼 **{labels['has_position_label']}** | {pos_advice.get('has_position', labels['continue_holding'])} |",
+                        "",
+                    ])
+
+                conditional = self._conditional_decision_block(dashboard)
+                if conditional:
+                    report_lines.extend([
+                        "### 🔎 条件型明日决策",
+                        "",
+                    ])
+                    watchlist = conditional.get("tomorrow_watchlist")
+                    if isinstance(watchlist, list) and watchlist:
+                        report_lines.append("**明日观察清单**:")
+                        for item in watchlist:
+                            report_lines.append(f"- {item}")
+                        report_lines.append("")
+                    trigger_strategy = conditional.get("trigger_strategy")
+                    if isinstance(trigger_strategy, dict):
+                        report_lines.extend([
+                            "| 情景 | 触发与动作 |",
+                            "|---------|---------|",
+                            f"| 走弱延续 | {trigger_strategy.get('bearish_continue', 'N/A')} |",
+                            f"| 中性观察 | {trigger_strategy.get('neutral_observe', 'N/A')} |",
+                            f"| 修复转强 | {trigger_strategy.get('bullish_repair', 'N/A')} |",
+                            "",
+                        ])
+                    position = conditional.get("position_advice")
+                    if isinstance(position, dict):
+                        report_lines.extend([
+                            "| 仓位状态 | 建议 |",
+                            "|---------|---------|",
+                            f"| 空仓 | {position.get('empty_position', 'N/A')} |",
+                            f"| 轻仓 | {position.get('light_position', 'N/A')} |",
+                            f"| 重仓 | {position.get('heavy_position', 'N/A')} |",
+                            "",
+                        ])
+                    data_completeness = conditional.get("data_completeness")
+                    if isinstance(data_completeness, dict):
+                        used = "、".join(str(item) for item in data_completeness.get("used", []) if str(item).strip())
+                        missing = "、".join(str(item) for item in data_completeness.get("missing", []) if str(item).strip())
+                        impact = str(data_completeness.get("impact") or "").strip()
+                        report_lines.extend([
+                            f"**数据完整性**: 已用 {used or 'N/A'}；缺失 {missing or '无'}。",
+                            f"**影响**: {impact or 'N/A'}",
+                            "",
+                        ])
+
+                external_ref = dashboard.get("external_market_reference") if isinstance(dashboard, dict) else None
+                if isinstance(external_ref, dict) and external_ref.get("status") not in (None, "", "not_relevant"):
+                    report_lines.extend([
+                        "### 🌐 外盘科技参考",
+                        "",
+                        f"- 状态：{external_ref.get('status', 'N/A')}",
+                        f"- 摘要：{external_ref.get('summary', 'N/A')}",
+                        f"- 影响：{external_ref.get('impact', 'N/A')}",
                         "",
                     ])
 
@@ -1514,6 +1621,7 @@ class NotificationService(
                 core = dashboard.get('core_conclusion', {}) if dashboard else {}
                 battle = dashboard.get('battle_plan', {}) if dashboard else {}
                 intel = dashboard.get('intelligence', {}) if dashboard else {}
+                conditional = self._conditional_decision_block(dashboard)
 
                 # 股票名称
                 stock_name = self._get_display_name(result, report_language)
@@ -1530,6 +1638,14 @@ class NotificationService(
                 signal_excerpt = self._decision_signal_excerpt(result, report_language)
                 if signal_excerpt:
                     lines.append(signal_excerpt)
+                    lines.append("")
+
+                watchlist = conditional.get("tomorrow_watchlist") if conditional else None
+                if isinstance(watchlist, list) and watchlist:
+                    lines.append("🔎 **明日观察**:")
+                    for item in watchlist[:3]:
+                        item_text = str(item)
+                        lines.append(f"   • {item_text[:50]}")
                     lines.append("")
 
                 # 重要信息区（舆情+基本面）
@@ -1550,10 +1666,12 @@ class NotificationService(
                 risks = intel.get('risk_alerts', []) if intel else []
                 if risks:
                     lines.append(f"🚨 **{labels['risk_alerts_label']}**:")
-                    for risk in risks[:2]:  # 最多显示2条
+                    for risk in risks[:3]:  # 最多显示3条
                         risk_str = str(risk)
                         risk_text = risk_str[:50] + "..." if len(risk_str) > 50 else risk_str
                         lines.append(f"   • {risk_text}")
+                    if len(risks) > 3:
+                        lines.append("   • 更多风险见完整报告")
                     lines.append("")
 
                 # 利好催化
@@ -1568,20 +1686,13 @@ class NotificationService(
 
                 # 狙击点位
                 sniper = battle.get('sniper_points', {}) if battle else {}
-                if sniper:
-                    ideal_buy = str(sniper.get('ideal_buy', ''))
-                    stop_loss = str(sniper.get('stop_loss', ''))
-                    take_profit = str(sniper.get('take_profit', ''))
-                    points = []
-                    if ideal_buy:
-                        points.append(f"🎯{labels['ideal_buy_label']}:{ideal_buy[:15]}")
-                    if stop_loss:
-                        points.append(f"🛑{labels['stop_loss_label']}:{stop_loss[:15]}")
-                    if take_profit:
-                        points.append(f"🎊{labels['take_profit_label']}:{take_profit[:15]}")
-                    if points:
-                        lines.append(" | ".join(points))
-                        lines.append("")
+                self._append_wechat_action_points(
+                    lines,
+                    result=result,
+                    sniper=sniper,
+                    labels=labels,
+                    report_language=report_language,
+                )
 
                 # 持仓建议
                 pos_advice = core.get('position_advice', {}) if core else {}
@@ -1775,6 +1886,7 @@ class NotificationService(
         core = dashboard.get('core_conclusion', {}) if dashboard else {}
         battle = dashboard.get('battle_plan', {}) if dashboard else {}
         intel = dashboard.get('intelligence', {}) if dashboard else {}
+        conditional = self._conditional_decision_block(dashboard)
 
         # 股票名称（转义 *ST 等特殊字符）
         stock_name = self._get_display_name(result, report_language)
@@ -1806,6 +1918,24 @@ class NotificationService(
                 "",
             ])
 
+        if conditional:
+            watchlist = conditional.get("tomorrow_watchlist")
+            trigger_strategy = conditional.get("trigger_strategy")
+            if isinstance(watchlist, list) and watchlist:
+                lines.extend(["### 🔎 明日条件", ""])
+                for item in watchlist[:4]:
+                    lines.append(f"- {str(item)[:80]}")
+                lines.append("")
+            if isinstance(trigger_strategy, dict):
+                lines.extend([
+                    "### 🧭 条件策略",
+                    "",
+                    f"- 走弱延续：{str(trigger_strategy.get('bearish_continue') or '-')[:90]}",
+                    f"- 中性观察：{str(trigger_strategy.get('neutral_observe') or '-')[:90]}",
+                    f"- 修复转强：{str(trigger_strategy.get('bullish_repair') or '-')[:90]}",
+                    "",
+                ])
+
         # 重要信息（舆情+基本面）
         info_added = False
         if intel:
@@ -1834,6 +1964,8 @@ class NotificationService(
                 lines.append(f"🚨 **{labels['risk_alerts_label']}**:")
                 for risk in risks[:3]:
                     lines.append(f"- {str(risk)[:60]}")
+                if len(risks) > 3:
+                    lines.append("- 更多风险见完整报告")
 
             # 利好催化
             catalysts = intel.get('positive_catalysts', [])
@@ -1852,14 +1984,14 @@ class NotificationService(
             lines.extend([
                 f"### 🎯 {labels['action_points_heading']}",
                 "",
-                f"| {labels['ideal_buy_label']} | {labels['stop_loss_label']} | {labels['take_profit_label']} |",
-                "|------|------|------|",
             ])
-            ideal_buy = sniper.get('ideal_buy', '-')
-            stop_loss = sniper.get('stop_loss', '-')
-            take_profit = sniper.get('take_profit', '-')
-            lines.append(f"| {ideal_buy} | {stop_loss} | {take_profit} |")
-            lines.append("")
+            self._append_wechat_action_points(
+                lines,
+                result=result,
+                sniper=sniper,
+                labels=labels,
+                report_language=report_language,
+            )
 
         # ========== 信号归因分析 ==========
         signal_attr = dashboard.get('signal_attribution', {}) if dashboard else {}

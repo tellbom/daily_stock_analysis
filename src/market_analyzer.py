@@ -33,6 +33,7 @@ from src.llm.generation_backend import GenerationError
 from src.schemas.market_light import MARKET_LIGHT_REGIONS, MarketLightSnapshot
 from src.services.run_diagnostics import record_llm_run, record_llm_run_started
 from src.services.intelligence_service import IntelligenceService
+from src.services.us_tech_summary import build_us_tech_summary
 from data_provider.base import DataFetcherManager
 
 logger = logging.getLogger(__name__)
@@ -808,6 +809,9 @@ Focus on index trend, liquidity, and sector rotation to shape the next-session t
         if light is not None:
             payload["market_light"] = light
 
+        if self.region == "cn":
+            payload["us_tech_summary"] = self._get_us_tech_summary()
+
         if has_breadth_data:
             payload["breadth"] = {
                 "up_count": overview.up_count,
@@ -820,6 +824,95 @@ Focus on index trend, liquidity, and sector rotation to shape the next-session t
             }
 
         return payload
+
+    def _get_us_tech_summary(self) -> Dict[str, Any]:
+        cached = getattr(self, "_cached_us_tech_summary", None)
+        if isinstance(cached, dict):
+            return cached
+        try:
+            summary = build_us_tech_summary()
+        except Exception as exc:
+            logger.warning("构建美股科技摘要失败，按缺失处理: %s", exc)
+            summary = {
+                "status": "missing",
+                "missing_reason": f"build_failed:{type(exc).__name__}",
+                "summary": "美股科技链数据暂不可用。",
+                "possible_impact_on_a_share": "外盘科技映射缺失，A股相关板块仅按本地数据判断。",
+            }
+        self._cached_us_tech_summary = summary
+        return summary
+
+    @staticmethod
+    def _format_us_tech_summary_block(summary: Optional[Dict[str, Any]], language: str) -> str:
+        if not isinstance(summary, dict) or not summary:
+            return ""
+        status = str(summary.get("status") or "missing")
+        as_of = str(summary.get("as_of") or "N/A")
+        brief = str(summary.get("summary") or "")
+        impact = str(summary.get("possible_impact_on_a_share") or "")
+
+        def line_for(key: str, label: str) -> Optional[str]:
+            block = summary.get(key)
+            if not isinstance(block, dict) or block.get("status") != "available":
+                return None
+            change = block.get("change_pct")
+            try:
+                return f"- {label}: {float(change):+.2f}%"
+            except (TypeError, ValueError):
+                return f"- {label}: available"
+
+        def group_line(key: str, label: str) -> Optional[str]:
+            block = summary.get(key)
+            if not isinstance(block, dict) or block.get("status") != "available":
+                return None
+            avg = block.get("avg_change_pct")
+            try:
+                return f"- {label}: average {float(avg):+.2f}%"
+            except (TypeError, ValueError):
+                return f"- {label}: available"
+
+        if language == "en":
+            lines = [
+                "## US Technology Reference",
+                f"- Status: {status}",
+                f"- As of: {as_of}",
+            ]
+            if brief:
+                lines.append(f"- Summary: {brief}")
+            if impact:
+                lines.append(f"- Possible A-share impact: {impact}")
+            for item in (
+                line_for("nasdaq", "Nasdaq Composite"),
+                line_for("sp500_technology", "S&P 500 Technology proxy"),
+                line_for("philadelphia_semiconductor_index", "Philadelphia Semiconductor Index"),
+                group_line("mega_cap_tech", "Mega-cap tech"),
+                group_line("ai_semiconductor_chain", "AI / semiconductor chain"),
+                group_line("ev_chain", "EV chain"),
+            ):
+                if item:
+                    lines.append(item)
+            return "\n".join(lines)
+
+        lines = [
+            "## 美股科技链参考",
+            f"- 状态：{status}",
+            f"- 截止：{as_of}",
+        ]
+        if brief:
+            lines.append(f"- 摘要：{brief}")
+        if impact:
+            lines.append(f"- 对A股可能影响：{impact}")
+        for item in (
+            line_for("nasdaq", "纳斯达克综合指数"),
+            line_for("sp500_technology", "标普科技板块代理"),
+            line_for("philadelphia_semiconductor_index", "费城半导体指数"),
+            group_line("mega_cap_tech", "美股科技巨头"),
+            group_line("ai_semiconductor_chain", "AI/半导体链"),
+            group_line("ev_chain", "新能源车链"),
+        ):
+            if item:
+                lines.append(item)
+        return "\n".join(lines)
 
     def _supports_market_light(self) -> bool:
         return self.region in MARKET_LIGHT_REGIONS
@@ -1461,6 +1554,12 @@ Concept lagging: {bottom_concepts_text if bottom_concepts_text else "N/A"}"""
             if not indices_text
             else ""
         )
+        us_tech_summary_block = ""
+        if self.region == "cn":
+            us_tech_summary_block = self._format_us_tech_summary_block(
+                self._get_us_tech_summary(),
+                review_language,
+            )
         if review_language == "en":
             data_no_indices_hint = (
                 "Note: Market data fetch failed. Rely mainly on [Market News] for qualitative analysis. Do not invent index levels."
@@ -1532,6 +1631,8 @@ Concept lagging: {bottom_concepts_text if bottom_concepts_text else "N/A"}"""
 
 {data_limits_block}
 
+{us_tech_summary_block}
+
 ## Market News
 {news_placeholder}
 
@@ -1585,6 +1686,8 @@ Output the report content directly, no extra commentary.
 {sector_block}
 
 {data_limits_block}
+
+{us_tech_summary_block}
 
 ## 市场新闻
 {news_placeholder}

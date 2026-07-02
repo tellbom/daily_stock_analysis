@@ -126,6 +126,127 @@ def _normalize_risk_warning_values(value: Any) -> List[str]:
     return [text] if text else []
 
 
+_CONDITIONAL_DECISION_KEYS = (
+    "decision",
+    "score",
+    "trend",
+    "confidence",
+    "one_sentence_summary",
+    "core_reasons",
+    "tomorrow_watchlist",
+    "trigger_strategy",
+    "position_advice",
+    "reversal_confirmation",
+    "invalid_condition",
+    "risk_alerts",
+    "positive_catalysts",
+    "data_completeness",
+)
+
+
+def _normalize_text_list(value: Any, *, limit: int = 8) -> List[str]:
+    if value is None:
+        return []
+    if isinstance(value, str):
+        text = value.strip()
+        return [text] if text else []
+    if isinstance(value, (list, tuple, set)):
+        items: List[str] = []
+        for item in value:
+            if isinstance(item, dict):
+                text = json.dumps(item, ensure_ascii=False)
+            else:
+                text = str(item).strip()
+            if text:
+                items.append(text)
+            if len(items) >= limit:
+                break
+        return items
+    if isinstance(value, dict):
+        return [json.dumps(value, ensure_ascii=False)]
+    text = str(value).strip()
+    return [text] if text else []
+
+
+def normalize_conditional_decision_payload(data: Dict[str, Any], dashboard: Any) -> Dict[str, Any]:
+    """Build the conditional short-term decision block without breaking old JSON."""
+
+    dash = dashboard if isinstance(dashboard, dict) else {}
+    existing = dash.get("conditional_decision")
+    source = existing if isinstance(existing, dict) else {}
+    core = dash.get("core_conclusion") if isinstance(dash.get("core_conclusion"), dict) else {}
+    intelligence = dash.get("intelligence") if isinstance(dash.get("intelligence"), dict) else {}
+    phase = dash.get("phase_decision") if isinstance(dash.get("phase_decision"), dict) else {}
+
+    payload: Dict[str, Any] = {}
+    for key in _CONDITIONAL_DECISION_KEYS:
+        if key in data:
+            payload[key] = data.get(key)
+        elif key in source:
+            payload[key] = source.get(key)
+
+    payload.setdefault("decision", data.get("operation_advice") or data.get("decision_type") or "")
+    payload.setdefault("score", data.get("sentiment_score"))
+    payload.setdefault("trend", data.get("trend_prediction") or "")
+    payload.setdefault("confidence", data.get("confidence_level") or "")
+    payload.setdefault(
+        "one_sentence_summary",
+        data.get("one_sentence_summary") or core.get("one_sentence") or data.get("analysis_summary") or "",
+    )
+    payload["core_reasons"] = _normalize_text_list(
+        payload.get("core_reasons") or data.get("key_points") or data.get("buy_reason"),
+        limit=5,
+    )
+    payload["tomorrow_watchlist"] = _normalize_text_list(
+        payload.get("tomorrow_watchlist") or phase.get("watch_conditions"),
+        limit=6,
+    )
+    trigger_strategy = payload.get("trigger_strategy")
+    if not isinstance(trigger_strategy, dict):
+        trigger_strategy = {}
+    trigger_strategy.setdefault(
+        "bearish_continue",
+        "跌破关键支撑或主力资金继续流出时，优先降仓/回避。",
+    )
+    trigger_strategy.setdefault(
+        "neutral_observe",
+        "未放量突破前等待，关注量能、资金流和风险事件变化。",
+    )
+    trigger_strategy.setdefault(
+        "bullish_repair",
+        "放量站回短期均线或突破压力位后，再考虑小仓试错。",
+    )
+    payload["trigger_strategy"] = trigger_strategy
+
+    position_advice = payload.get("position_advice")
+    if not isinstance(position_advice, dict):
+        position_advice = {}
+    legacy_position = core.get("position_advice") if isinstance(core.get("position_advice"), dict) else {}
+    position_advice.setdefault("empty_position", legacy_position.get("no_position") or "等待触发条件。")
+    position_advice.setdefault("light_position", legacy_position.get("has_position") or "轻仓跟踪，严格风控。")
+    position_advice.setdefault("heavy_position", "降低单股暴露，按失效条件执行。")
+    payload["position_advice"] = position_advice
+
+    payload["reversal_confirmation"] = _normalize_text_list(payload.get("reversal_confirmation"), limit=5)
+    payload.setdefault("invalid_condition", phase.get("confidence_reason") or "")
+    payload["risk_alerts"] = _normalize_text_list(
+        payload.get("risk_alerts") or intelligence.get("risk_alerts") or data.get("risk_warning"),
+        limit=8,
+    )
+    payload["positive_catalysts"] = _normalize_text_list(
+        payload.get("positive_catalysts") or intelligence.get("positive_catalysts"),
+        limit=8,
+    )
+    data_completeness = payload.get("data_completeness")
+    if not isinstance(data_completeness, dict):
+        data_completeness = {}
+    data_completeness.setdefault("used", _normalize_text_list(data_completeness.get("used"), limit=10))
+    data_completeness.setdefault("missing", _normalize_text_list(data_completeness.get("missing"), limit=10))
+    data_completeness.setdefault("impact", str(data_completeness.get("impact") or "按已提供数据分析，缺失项降低置信度。"))
+    payload["data_completeness"] = data_completeness
+    return payload
+
+
 def _today_has_realtime_overlay(today: Any) -> bool:
     if not isinstance(today, dict):
         return False
@@ -1608,6 +1729,8 @@ class AnalysisResult:
 
     # ========== 决策仪表盘 (新增) ==========
     dashboard: Optional[Dict[str, Any]] = None  # 完整的决策仪表盘数据
+    conditional_decision: Optional[Dict[str, Any]] = None  # 条件型短线决策扩展
+    external_market_reference: Optional[Dict[str, Any]] = None  # 外盘参考扩展
 
     # ========== 走势分析 ==========
     trend_analysis: str = ""  # 走势形态分析（支撑位、压力位、趋势线等）
@@ -1671,6 +1794,8 @@ class AnalysisResult:
             'action': self.action,
             'action_label': self.action_label,
             'dashboard': self.dashboard,  # 决策仪表盘数据
+            'conditional_decision': self.conditional_decision,
+            'external_market_reference': self.external_market_reference,
             'trend_analysis': self.trend_analysis,
             'short_term_outlook': self.short_term_outlook,
             'medium_term_outlook': self.medium_term_outlook,
@@ -1815,6 +1940,38 @@ class GeminiAnalyzer:
     "operation_advice": "买入/加仓/持有/减仓/卖出/观望",
     "decision_type": "buy/hold/sell",
     "confidence_level": "高/中/低",
+    "decision": "短线明日主决策：买入/加仓/持有/减仓/卖出/观望",
+    "score": 0-100整数,
+    "trend": "强烈看多/看多/震荡/看空/强烈看空",
+    "confidence": "高/中/低",
+    "one_sentence_summary": "一句话条件型结论，说明当前动作和触发条件",
+    "core_reasons": ["只放核心逻辑，不重复风险清单"],
+    "tomorrow_watchlist": ["明日优先观察项1", "明日优先观察项2"],
+    "trigger_strategy": {
+        "bearish_continue": "走弱延续时的处理条件",
+        "neutral_observe": "中性震荡时的观察条件",
+        "bullish_repair": "修复转强时的触发条件"
+    },
+    "position_advice": {
+        "empty_position": "空仓者动作",
+        "light_position": "轻仓者动作",
+        "heavy_position": "重仓者动作"
+    },
+    "reversal_confirmation": ["反转确认条件1", "反转确认条件2"],
+    "invalid_condition": "当前判断失效条件",
+    "risk_alerts": ["集中列出风险，不在 core_reasons 重复展开"],
+    "positive_catalysts": ["潜在正向催化"],
+    "external_market_reference": {
+        "status": "available/partial/missing/not_relevant",
+        "summary": "美股科技链/外盘映射摘要",
+        "impact": "对该股或所在板块的影响",
+        "data_as_of": "YYYY-MM-DD 或 N/A"
+    },
+    "data_completeness": {
+        "used": ["已使用的数据块"],
+        "missing": ["缺失或失败的数据块"],
+        "impact": "缺失项对结论的影响"
+    },
 
     "dashboard": {
         "core_conclusion": {
@@ -1904,6 +2061,21 @@ class GeminiAnalyzer:
             "market_conditions": 市场环境贡献度(0-100),
             "strongest_bullish_signal": "最强看多信号名称",
             "strongest_bearish_signal": "最强看空信号名称"
+        },
+
+        "conditional_decision": {
+            "decision": "与顶层 decision 一致",
+            "tomorrow_watchlist": ["明日优先观察项"],
+            "trigger_strategy": {
+                "bearish_continue": "走弱延续策略",
+                "neutral_observe": "中性观察策略",
+                "bullish_repair": "修复转强策略"
+            },
+            "position_advice": {
+                "empty_position": "空仓者动作",
+                "light_position": "轻仓者动作",
+                "heavy_position": "重仓者动作"
+            }
         }
     },
 
@@ -1964,6 +2136,7 @@ class GeminiAnalyzer:
 3. **精确狙击点**：必须给出具体价格，不说模糊的话
 4. **检查清单可视化**：用 ✅⚠️❌ 明确显示每项检查结果
 5. **风险优先级**：舆情中的风险点要醒目标出
+6. **条件决策优先**：明日建议必须给出走弱延续/中性观察/修复转强三套条件，不输出单一口号
 
 ## 可操作性与稳定性约束
 
@@ -1973,6 +2146,11 @@ class GeminiAnalyzer:
 - 只有在接近支撑确认或有效突破压力，且资金流/量价配合时，才能给出买入；接近压力且资金流出时不得追买。
 - 只有在跌破关键支撑、主力资金持续流出或风险显著放大时，才能给出卖出/减仓。
 - 必须输出 `dashboard.phase_decision` 七字段；盘中/午休/临近收盘要给出当前动作、观察条件和下一次检查点。
+- 必须输出顶层条件型短线字段，并同步写入 `dashboard.conditional_decision`，旧字段 `operation_advice`、`decision_type`、`dashboard` 不得缺失。
+- `core_reasons` 只写核心交易逻辑；重大风险统一放入 `risk_alerts`，检查清单只写指标状态，避免同一风险在三处重复堆叠。
+- 若 `operation_advice` 是“观望/减仓/卖出”，不要硬给理想买点，必须改写为“潜在买点条件/修复条件”。
+- 若大盘环境包含 `us_tech_summary`，科技、电子、半导体、AI、算力、新能源车相关个股必须输出 `external_market_reference`；不相关时标记 `not_relevant`。
+- 必须输出 `data_completeness.used/missing/impact`，明确资金流、估值、行业、事件、融资融券等数据是否可用以及对置信度的影响。
 - 建议输出可选展示字段 `dashboard.signal_attribution` 六字段；解释推荐理由的构成，包括技术指标、新闻舆情、基本面、市场环境的贡献度，以及最强看多/看空信号。
 - 盘前、非交易日或未知阶段不得伪造今日盘中走势；quote/daily_bars/technical 存在 stale、fallback、missing、fetch_failed、partial 或 estimated 时，`confidence_level` 不得为高。"""
 
@@ -4122,9 +4300,15 @@ no_recent_events_found
 ### 决策仪表盘要求：
 - **股票名称**：必须输出正确的中文全称（如"贵州茅台"而非"股票600519"）
 - **核心结论**：一句话说清该买/该卖/该等
+- **条件型明日建议**：必须输出 `decision/score/trend/confidence/one_sentence_summary/core_reasons/tomorrow_watchlist/trigger_strategy/position_advice/reversal_confirmation/invalid_condition/risk_alerts/positive_catalysts/data_completeness`
+- **三情景触发策略**：`trigger_strategy` 必须包含 `bearish_continue`、`neutral_observe`、`bullish_repair`
 - **持仓分类建议**：空仓者怎么做 vs 持仓者怎么做
 - **具体狙击点位**：买入价、止损价、目标价（精确到分）
+- **观望/减仓不强行买点**：若建议为观望、减仓或卖出，`ideal_buy` 应写成“潜在买点条件/修复条件”，而不是立即买入价
 - **检查清单**：每项用 ✅/⚠️/❌ 标记
+- **风险去重**：`core_reasons` 只保留核心交易逻辑，风险统一进入 `risk_alerts`，检查清单只记录指标状态
+- **外盘科技映射**：若大盘环境包含美股科技链参考，相关行业个股必须输出 `external_market_reference`，不相关则写 `status=not_relevant`
+- **数据完整性**：必须在 `data_completeness` 中说明已使用与缺失的数据块，以及缺失项如何影响置信度
 - **消息面时间合规**：`latest_news`、`risk_alerts`、`positive_catalysts` 不得包含超出近{news_window_days}日或时间未知的信息
 - **事件上下文合规**：只能基于已注入的 `event_context` / `news_context` 归纳事件，不得自行联网搜索或虚构新闻；公告风险优先于普通新闻，未确认新闻必须标注不确定性
 - **技术面一致性**：严禁把“空头排列”和“多头排列”等互斥结论同时当作有效依据；若基本面/事件面与技术面冲突，必须明确写“事件先行、技术待确认”或“基本面偏多，但技术面尚未确认”
@@ -4496,6 +4680,15 @@ no_recent_events_found
 
             # 提取 dashboard 数据
             dashboard = data.get('dashboard', None)
+            if not isinstance(dashboard, dict):
+                dashboard = {}
+            conditional_decision = normalize_conditional_decision_payload(data, dashboard)
+            dashboard["conditional_decision"] = conditional_decision
+            external_market_reference = data.get("external_market_reference")
+            if isinstance(external_market_reference, dict):
+                dashboard["external_market_reference"] = external_market_reference
+            else:
+                external_market_reference = None
             # 归一化 signal_attribution（LLM 可能返回字符串/负数/总和≠100）
             normalize_report_signal_attribution(dashboard)
 
@@ -4530,6 +4723,8 @@ no_recent_events_found
                 report_language=report_language,
                 # 决策仪表盘
                 dashboard=dashboard,
+                conditional_decision=conditional_decision,
+                external_market_reference=external_market_reference,
                 # 走势分析
                 trend_analysis=data.get('trend_analysis', ''),
                 short_term_outlook=data.get('short_term_outlook', ''),

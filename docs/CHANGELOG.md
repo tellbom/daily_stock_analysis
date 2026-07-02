@@ -23,6 +23,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 - [测试] 补充 LLM 因子摘要、AnalysisContextPack 因子块和 analyzer prompt 注入回归测试。
 - [改进] 新增轻量事件上下文，按个股公告、新闻、研报标题和行业/板块事件标准化注入 LLM 分析，并过滤未来发布时间数据。
 - [测试] 补充事件上下文标准化、未来信息过滤、AnalysisContextPack 事件块和 Prompt 注入回归测试。
+- [改进] LLM 个股报告新增条件型短线决策结构，企业微信通知拆分买入/风控/目标参考，并在 A 股大盘上下文中接入美股科技链摘要。
 
 ## [3.24.1] - 2026-06-28
 

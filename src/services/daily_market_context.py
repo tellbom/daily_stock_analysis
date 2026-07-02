@@ -72,6 +72,7 @@ class DailyMarketContext:
     history_id: Optional[int] = None
     query_id: Optional[str] = None
     full_report: Optional[str] = None
+    us_tech_summary: Optional[Dict[str, Any]] = None
 
     def to_safe_dict(self) -> Dict[str, Any]:
         payload: Dict[str, Any] = {
@@ -83,6 +84,8 @@ class DailyMarketContext:
         }
         if self.position_cap:
             payload["position_cap"] = self.position_cap
+        if isinstance(self.us_tech_summary, Mapping):
+            payload["us_tech_summary"] = _sanitize_us_tech_summary(self.us_tech_summary)
         return payload
 
 
@@ -629,6 +632,11 @@ class DailyMarketContextService:
             history_id=history_id if isinstance(history_id, int) else None,
             query_id=query_id if isinstance(query_id, str) and query_id else None,
             full_report=full_report,
+            us_tech_summary=(
+                dict(scoped_payload.get("us_tech_summary"))
+                if isinstance(scoped_payload.get("us_tech_summary"), Mapping)
+                else None
+            ),
         )
 
 
@@ -678,6 +686,9 @@ def format_daily_market_context_prompt_section(
         lines.append("- Guardrail: if this context is conservative or high risk, avoid aggressive buy advice and prefer smaller position sizing or confirmation.")
         if source:
             lines.append(f"- Source: {source}")
+        us_tech_lines = _format_us_tech_summary_prompt_lines(payload.get("us_tech_summary"), language)
+        if us_tech_lines:
+            lines.extend(us_tech_lines)
         return "\n".join(lines) + "\n"
 
     label = _REGION_LABEL_ZH.get(region, region)
@@ -698,7 +709,73 @@ def format_daily_market_context_prompt_section(
     lines.append("- 约束：若大盘环境偏谨慎、退潮、观望或高风险，避免给出激进买入建议，优先控制仓位并等待确认。")
     if source:
         lines.append(f"- 来源：{source}")
+    us_tech_lines = _format_us_tech_summary_prompt_lines(payload.get("us_tech_summary"), language)
+    if us_tech_lines:
+        lines.extend(us_tech_lines)
     return "\n".join(lines) + "\n"
+
+
+def _sanitize_us_tech_summary(summary: Mapping[str, Any]) -> Dict[str, Any]:
+    allowed_keys = {
+        "status",
+        "as_of",
+        "source",
+        "missing_reason",
+        "nasdaq",
+        "sp500_technology",
+        "philadelphia_semiconductor_index",
+        "mega_cap_tech",
+        "ai_semiconductor_chain",
+        "ev_chain",
+        "summary",
+        "possible_impact_on_a_share",
+        "limitations",
+    }
+    safe: Dict[str, Any] = {}
+    for key in allowed_keys:
+        value = summary.get(key)
+        if isinstance(value, Mapping):
+            safe[key] = dict(value)
+        elif isinstance(value, list):
+            safe[key] = list(value[:20])
+        elif value is not None:
+            safe[key] = value
+    return safe
+
+
+def _format_us_tech_summary_prompt_lines(value: Any, language: str) -> List[str]:
+    if not isinstance(value, Mapping):
+        return []
+    status = str(value.get("status") or "missing").strip()
+    as_of = str(value.get("as_of") or "N/A").strip()
+    summary = _escape_untrusted_market_summary_sentinels(str(value.get("summary") or "").strip())
+    impact = _escape_untrusted_market_summary_sentinels(
+        str(value.get("possible_impact_on_a_share") or "").strip()
+    )
+    if language == "en":
+        lines = [
+            "- US technology reference:",
+            f"  - Status: {status}",
+            f"  - As of: {as_of}",
+        ]
+        if summary:
+            lines.append(f"  - Summary: {summary}")
+        if impact:
+            lines.append(f"  - Possible A-share impact: {impact}")
+        lines.append("  - Use only as cross-market background for technology, electronics, semiconductor, AI, and EV-related A-shares.")
+        return lines
+
+    lines = [
+        "- 美股科技链参考：",
+        f"  - 状态：{status}",
+        f"  - 截止：{as_of}",
+    ]
+    if summary:
+        lines.append(f"  - 摘要：{summary}")
+    if impact:
+        lines.append(f"  - 对A股可能影响：{impact}")
+    lines.append("  - 仅作为科技、电子、半导体、AI、新能源车相关A股的跨市场背景，不得替代本地量价、资金流和事件数据。")
+    return lines
 
 
 def _escape_untrusted_market_summary_sentinels(summary: str) -> str:
